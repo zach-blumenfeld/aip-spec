@@ -397,7 +397,7 @@ Checklist. Follow sequentially.
    1. Draft `SKILL.md` at the skill folder root using the source materials. Choose each step's kind per Best Practices.
          - Frontmatter: `name`, `description`, `metadata.aip-version`.
          - Body: the AIP runtime block, verbatim (copy it from the example under Body), then exactly one fenced YAML block. No other prose, no second code block. The YAML validates against the AIP procedure schema (`assets/procedure.schema.json`).
-   2. Run `aip-spec validate ./<skill-name>` (from a clone of the aip-spec repo, `uv run scripts/validate.py ./<skill-name>` is the same). Re-run after every edit to `SKILL.md` or to the skill's files — eyeball checks routinely miss required-field and broken-reference bugs.
+   2. Run `aip-spec validate ./<skill-name>`. Re-run after every edit to `SKILL.md` or to the skill's files — eyeball checks routinely miss required-field and broken-reference bugs.
       - **Trivial** (typo, missing required field, formatting drift): fix silently and re-run.
       - **Substantive** (format doesn't fit, semantic mismatch, structural conflict): surface the error in plain language with your proposed fix; confirm before retrying.
    3. Once validation passes, run a thorough completeness check where you check for dropped logic or key context that was left out from the source. Walk the source line by line. For each distinct piece of source content:
@@ -435,7 +435,7 @@ Checklist. Follow sequentially.
 ### Validating an AIP Skill
 
 ```bash
-aip-spec validate <path/to/skill-folder>          # from a clone of the aip-spec repo: uv run scripts/validate.py <path/to/skill-folder>
+aip-spec validate <path/to/skill-folder>
 ```
 Checks: frontmatter — required fields (`name`, `description`, `metadata.aip-version`), Agent Skills format rules on `name` (length, charset, hyphen rules, folder-name match), length caps on `description` and `compatibility`, type rules on `license`/`allowed-tools`/`metadata` values, `metadata.aip-version` matches the validator's format version. Required folder structure (`source/` present). Body is the AIP runtime block, verbatim, then exactly one fenced YAML block. The YAML validates against the AIP procedure schema. Graph rules: unique step names, a runnable start, exactly one `end`, every `inputs_to` and router branch resolves, every step reachable from the start and able to reach the end, unique input names, thresholds name real questions, every referenced asset, reference, and script exists on disk.
 

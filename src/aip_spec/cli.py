@@ -8,6 +8,7 @@
     aip-spec --version                  the format version
 
 Running a skill is the `aip` package (`aip run`); this command never executes anything.
+The installer (`install.sh`) puts it on PATH, which is what the authoring skill assumes.
 """
 
 import argparse

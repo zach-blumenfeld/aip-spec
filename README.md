@@ -46,9 +46,6 @@ aip-spec skill install --path ./.claude/skills    # a project-local skills direc
 aip-spec skill remove
 ```
 
-A plain clone is also a skill: `git clone --branch v0.5a0 https://github.com/zach-blumenfeld/aip-spec.git ./.claude/skills/aip`
-puts the same `SKILL.md`, `references/`, and `assets/` in place, with `scripts/validate.py` as the validator.
-
 For the runtime as well (`aip run`, the client and the server), use the installer in
 [zach-blumenfeld/aip](https://github.com/zach-blumenfeld/aip); it pulls this package in.
 
@@ -65,7 +62,7 @@ For *consuming* the resulting skill, the opposite holds: AIP's structure is what
 The AIP skill exposes two top-level procedures:
 
 1. **Author an AIP skill** — bring source material (or describe verbally); the agent compiles it into an execution graph validated against the AIP procedure schema, runs it, and tests it. Details in [`SKILL.md` § Authoring an Agent Skill](SKILL.md#authoring-an-agent-skill).
-2. **Validate an AIP skill** — run the validator directly, or let the agent run it as part of authoring. Details in [`SKILL.md` § Validating an AIP Skill](SKILL.md#validating-an-aip-skill).
+2. **Validate an AIP skill** — run `aip-spec validate` directly, or let the agent run it as part of authoring. Details in [`SKILL.md` § Validating an AIP Skill](SKILL.md#validating-an-aip-skill).
 
 ## AIP Skill Spec
 
@@ -78,11 +75,10 @@ There is one format. It is defined by the pydantic models in [`src/aip_spec/mode
 ## Validation
 
 ```bash
-aip-spec validate <path/to/skill-folder>             # with the CLI installed
-uv run scripts/validate.py <path/to/skill-folder>   # from a plain git clone, no install
+aip-spec validate <path/to/skill-folder>
 ```
 
-Both run the same checks: frontmatter (Agent Skills rules plus `metadata.aip-version`), folder structure (`source/` present), body shape, the YAML against the format models, and graph checks the models cannot express: unique step names, a runnable start, exactly one end, every edge resolving, every step reachable from the start and able to reach the end, unique input names, thresholds naming real questions, and every referenced asset, reference, and script present on disk.
+It checks frontmatter (Agent Skills rules plus `metadata.aip-version`), folder structure (`source/` present), body shape, the YAML against the format models, and graph checks the models cannot express: unique step names, a runnable start, exactly one end, every edge resolving, every step reachable from the start and able to reach the end, unique input names, thresholds naming real questions, and every referenced asset, reference, and script present on disk.
 
 Output is JSON Lines on stderr (`path`, `kind`, `message`, optional `location`, optional `severity`) and a one-line human summary on stdout. Exit 0 on success, 1 on any error.
 
