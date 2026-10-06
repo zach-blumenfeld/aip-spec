@@ -9,10 +9,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-Track changes here as you make them. On release, rename this section to the new version (e.g., `[0.5a0] — YYYY-MM-DD`) and start a new `[Unreleased]` at the top.
+Track changes here as you make them. On release, rename this section to the new version (e.g., `[0.5a2] — YYYY-MM-DD`) and start a new `[Unreleased]` at the top.
 
-### Changed
-- **Format `0.5a1`: the runtime block addresses the executing agent, not an AIP client.** The "Running" section (`aip run`, `aip search`, the pause and resume loop) is gone, and the Client and Server roles collapse into "You": the agent supplies each step's input, runs its script, answers its questions, performs its task, follows its router, and has the final say. A skill compiled to the spec stands on its own as a structure any agent can execute; the client-side story lives in the `aip-runtime` skill shipped with the `aip` package. The authoring skill's guidance says "the agent" or "free-form reasoning" where it said "the client", and names no `aip` command outside the validator lines and the functional-test step. `0.5a0` skills do not get a legacy entry: their block no longer validates.
+## [0.5a1] — 2026-10-06
+
+The first tagged release of the spec as its own repo. It carries the `0.4a0` and `0.5a0` format work below, which were cut in the `aip` repo without a release section.
 
 ### Added
 - **`aip-spec`, the format as its own distribution.** The spec moved out of the `aip` repo into this one: the pydantic models, the validator, the runtime block, the `aip` authoring skill, and the `billing-support` example. The package is `aip_spec`, its version is the format version, and it needs only pydantic and pyyaml; `aip` now depends on it. `SPEC_URL` and the schema `$id` point at this repo.
@@ -21,6 +22,7 @@ Track changes here as you make them. On release, rename this section to the new 
 - `SKILL.md`: the validator line is `aip-spec validate ./<skill-name>`; the functional-test step runs the skill with the `aip-runtime` skill when installed and otherwise by executing the procedure per the runtime block, naming no `aip` command; `compatibility` names `uv`.
 
 ### Changed
+- **Format `0.5a1`: the runtime block addresses the executing agent, not an AIP client.** The "Running" section (`aip run`, `aip search`, the pause and resume loop) is gone, and the Client and Server roles collapse into "You": the agent supplies each step's input, runs its script, answers its questions, performs its task, follows its router, and has the final say. A skill compiled to the spec stands on its own as a structure any agent can execute; the client-side story lives in the `aip-runtime` skill shipped with the `aip` package. The authoring skill's guidance says "the agent" or "free-form reasoning" where it said "the client", and names no `aip` command outside the validator lines and the functional-test step. `0.5a0` skills do not get a legacy entry: their block no longer validates.
 - **One format, defined in code (`0.4a0`).** AIP no longer has schema families. The procedure format is defined by pydantic models in `src/aip_spec/models.py`; `assets/procedure.schema.json` is generated from them (`aip-spec schema`) and kept in sync by a test. Steps are typed by `kind`: `decision` (SystemOne questions with per-question review `thresholds`), `execution` (a script under `scripts/` with eager `assets`), `client_task` (a template under `assets/` with lazy `references`), `router` (server-side branching on a client-chosen value via `branch_on` and `branches`), and `end` (the final state shape). The first step is the start; edges are `inputs_to` by step name. Every runnable step declares `inputs` in the AIP type vocabulary, which the server enforces at runtime. Dropped `depends_on`, `parallel`, `one_of`, per-step `outputs`, and the top-level `scope_and_approval`, `modes`, `search_shortcuts`, `integrations`, and `scenarios`. Carried over: `purpose`, `trigger_when`, `do_not_use_when`, `steps`, `anti_patterns`.
 - **Frontmatter** collapses `metadata.aip.spec` and `metadata.aip.schemaId` into one string key, `metadata.aip-version`, making `metadata` a plain string→string map per the Agent Skills spec.
 - **`source/`** stays required for the material the skill was compiled from; it no longer bundles a schema copy.
