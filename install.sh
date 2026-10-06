@@ -11,7 +11,7 @@
 # Idempotent: safe to re-run; it upgrades the package and refreshes the skill.
 set -euo pipefail
 
-AIP_SPEC_REF="${AIP_SPEC_REF:-v0.5a0}"
+AIP_SPEC_REF="${AIP_SPEC_REF:-v0.5a1}"
 
 info() { printf '\033[36m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[32m✓\033[0m %s\n'  "$*"; }

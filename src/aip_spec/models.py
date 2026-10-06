@@ -11,7 +11,7 @@ from typing import Annotated, Dict, List, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-FORMAT_VERSION = "0.5a0"
+FORMAT_VERSION = "0.5a1"
 # Earlier formats whose skills this validator still accepts, with a `runtime_block_outdated` warning.
 LEGACY_VERSIONS = ("0.4a0",)
 SPEC_URL = f"https://github.com/zach-blumenfeld/aip-spec/tree/v{FORMAT_VERSION}"

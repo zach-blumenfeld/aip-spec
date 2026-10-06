@@ -1,6 +1,6 @@
 [project]
 name = "aip-spec"
-version = "0.5a0"
+version = "0.5a1"
 description = "Agent Instruction Protocol: the procedure format, its validator, and the authoring skill"
 readme = "README.md"
 license = "Apache-2.0"

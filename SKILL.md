@@ -3,7 +3,7 @@ name: aip
 description: Create skills as Agent Instruction Protocol (AIP) — schema-validated structure that gates quality at write time, catches silent drift, and makes a skill corpus queryable for governance and analytics. Use whenever authoring a skill an autonomous agent will consume, including net-new skills, and compiling existing material (runbooks, deliberations, specs, decision logs, post-mortems). Default to using this any time the consumer is an autonomous agent — the structural constraint is what makes a skill production-grade.
 compatibility: Requires uv (https://docs.astral.sh/uv/) for the aip-spec validator.
 metadata:
-  aip-version: "0.5a0"
+  aip-version: "0.5a1"
 ---
 
 # AIP — Agent Instruction Protocol
@@ -20,7 +20,7 @@ metadata:
 
 ## What AIP Is
 
-AIP is an extension to the [Agent Skills Spec](https://agentskills.io/specification.md) that enables a structured graph workflow. The freeform markdown body is replaced with a fenced YAML block validated against a [JSON Schema](https://json-schema.org/) representing a graph workflow of the underlying procedural logic.  This specification can then be used to configure an AIP server that together with the AIP client offers traversal protocol over this graph for fast structured workflow execution. 
+AIP is an extension to the [Agent Skills Spec](https://agentskills.io/specification.md) that enables a structured graph workflow. The freeform markdown body is replaced with a fenced YAML block validated against a [JSON Schema](https://json-schema.org/) representing a graph workflow of the underlying procedural logic. Every skill carries the runtime block, which tells the agent executing it how to walk the graph.
 
 ## Why Use AIP
 
@@ -84,7 +84,7 @@ YAML metadata at the top of `SKILL.md`, delimited by `---` markers.
 |-------------------------|----------|----------------------------------------------------------------------------------------------------|
 | `name`                  | Yes      | 1–64 chars; lowercase `a–z`, `0–9`, hyphens; no leading, trailing, or consecutive hyphens. Must match the parent directory name. |
 | `description`           | Yes      | 1–1024 chars. Describes *what* the skill encodes and *when* to use it; include specific keywords that help agents identify relevant tasks. |
-| `metadata.aip-version`  | Yes      | AIP format version this skill is written in. Currently `"0.5a0"`. *AIP-specific.*                  |
+| `metadata.aip-version`  | Yes      | AIP format version this skill is written in. Currently `"0.5a1"`. *AIP-specific.*                  |
 | `license`               | No       | License name or reference to a bundled license file, e.g. `Apache-2.0`.                            |
 | `compatibility`         | No       | 1–500 chars. Only when the skill has specific environment requirements (intended product, system packages, network access, runtime versions); most skills don't need it. |
 | Other `metadata.*` keys | No       | Arbitrary string→string mapping for properties not defined by the Agent Skills spec, e.g. `author`, `version` (the skill's own version, distinct from `aip-version`). Use unique key names. |
@@ -100,7 +100,7 @@ YAML metadata at the top of `SKILL.md`, delimited by `---` markers.
 
 ```yaml
 metadata:
-  aip-version: "0.5a0"
+  aip-version: "0.5a1"
   author: example-org
   version: "1.0"
 ```
@@ -109,39 +109,34 @@ metadata:
 
 The body — everything after the closing `---` of the frontmatter — must be the AIP runtime block, verbatim, followed by exactly one fenced YAML code block. No other prose or code blocks. The runtime block gives whoever executes the skill the terminology and semantics they need; copy it exactly as shown below. The YAML inside the fence is the procedure; it validates against the AIP procedure schema.     
 
-Example (pared down for illustration — real skills typically carry more steps and richer detail), from the bundled `examples/billing-support` skill. The first step is the start; the router branches server-side on the value the client chose:
+Example (pared down for illustration — real skills typically carry more steps and richer detail), from the bundled `examples/billing-support` skill. The first step is the start; the router branches on the value the decision produced:
 
 ````markdown
-# AIP runtime — format 0.5a0
+# AIP runtime — format 0.5a1
 
-You are executing an (Agent Instruction Protocol) AIP procedure: the fenced YAML block in this skill's `SKILL.md`. AIP is a protocol for cheaply, quickly, and accurately executing multi-step tasks using a graph-based workflow. AIP is portable, so while designed for execution with an AIP client and server, you, the agent can play both roles instead. 
-
-## Running
-
-If the `aip` command is available (`aip --help` succeeds), use it: run `aip run <this skill's folder> --input <start.json>` with the start step's inputs as JSON. When an AIP server is configured (`AIP_SERVER` or `aip config --server`), `aip run <this skill's name>` does the same against the published copy, and `aip search "<words>"` finds procedures by what they do. When the run needs you it prints a JSON pause and exits with code 3. `paused` says why: `decision` — answer the listed questions; `review` — confirm or override the flagged answers; `client_task` — do the task and produce the keys in `expects`. Put your answer in a JSON file and run the `resume` command the pause printed. Repeat until the output has `"done": true`; `state` is the result. If `aip` is not available, execute the procedure yourself, following the semantics below.
+You are executing an Agent Instruction Protocol (AIP) procedure: the fenced YAML block in this skill's `SKILL.md`. AIP is a protocol for cheaply, quickly, and accurately executing multi-step tasks as a graph of typed steps. You drive the run and execute every step yourself, following the semantics below.
 
 Critical terminology:
 
-- **Client**: whoever drives the run: posts each step's input, reviews uncertain decisions, performs client tasks, and makes the final call at every step. As a plain Agent Skill, it is the agent that activated the skill.
-- **Server**: runs each step and validates its input against the step's `inputs`. Without one, the activating agent does this itself: runs scripts, answers decision questions by its own judgment, and follows routers.
+- **Client**: you, the agent running this procedure; the `client_task` step kind is named for it. You supply each step's input, run its script, answer its questions by your own judgment, perform its task, follow its router, and make the final call at every step.
 - **State**: the JSON object a step receives. Each step declares its required keys as `inputs`; extra keys pass through.
-- **Step kinds**: `execution` runs a script, `decision` asks typed questions about the state, `client_task` hands work to the client, `router` branches on a value in the state, `end` declares the final state's shape.
+- **Step kinds**: `execution` runs a script, `decision` asks typed questions about the state, `client_task` hands work to you, `router` branches on a value in the state, `end` declares the final state's shape.
 
 ## Execution
 
-The state is one JSON object. It starts as the start step's `inputs` and flows along `inputs_to`; each step's output is merged over it, so keys accumulate and extra keys pass through untouched. A step runs only if the state holds every key it declares in `inputs`, with the declared types. The client may change the state before any step runs; it has the final say at every step.
+The state is one JSON object. It starts as the start step's `inputs` and flows along `inputs_to`; each step's output is merged over it, so keys accumulate and extra keys pass through untouched. A step runs only if the state holds every key it declares in `inputs`, with the declared types; check that before each step. You may change the state before any step runs; you have the final say at every step.
 
-- **`execution`**: run `script` with one JSON object on stdin, `{"currentState": <state>, "assets": {<file stem>: <content>}, "expects": <the next step's inputs>}`. The script writes one JSON object to stdout; it is merged over the state.
-- **`decision`**: answer each question against the state. Each answer collapses to one value under its question name and is merged over the state: a noul to `true`/`false`, a choice to its label, a score to its level number. With a decision model, an answer under its threshold is sent to the client to confirm or override before continuing; without one, the client answers the questions.
-- **`client_task`**: render `template` with `{key}` from the state, `{assets[stem]}` for its assets, and `{meta.name}` for the skill name. The client performs the task, loading `references` if their descriptions apply, and returns the next step's `inputs`; they are merged over the state.
+- **`execution`**: run `script` with one JSON object on stdin, `{"currentState": <state>, "assets": {<file stem>: <content>}, "expects": <the next step's inputs>}`. The script writes one JSON object to stdout; merge it over the state.
+- **`decision`**: answer each question against the state. Each answer collapses to one value under its question name and is merged over the state: a noul to `true`/`false`, a choice to its label, a score to its level number. `thresholds` name the questions where an uncertain answer matters most; when your answer to one is a close call, reconsider it before continuing.
+- **`client_task`**: render `template` with `{key}` from the state, `{assets[stem]}` for its assets, and `{meta.name}` for the skill name. Perform the task, loading `references` if their descriptions apply, and produce the next step's `inputs`; merge them over the state.
 - **`router`**: read the state's `branch_on` key and continue at `branches[value]`. A value with no branch is an error.
 - **`end`**: the state must hold `end`'s `inputs`. That state is the procedure's result.
 
 ```yaml
 purpose: >
   Turn an inbound billing message into either a tier-2 ticket or a drafted reply.
-  A structured decision model classifies the message; the client confirms low-confidence
-  calls; a script opens the ticket; the client drafts the reply against the refund policy.
+  A structured decision classifies the message; a script opens the ticket; the agent
+  drafts the reply against the refund policy.
 
 trigger_when:
   - A customer message about a charge, invoice, refund, or subscription arrives.
@@ -285,10 +280,10 @@ Treat `SKILL.md` as an execution graph: steps are nodes, inputs flow over edges.
    - lookup tables
    - numeric calculations, thresholds, or caps
    - validation against a fixed set of rules
-2. **Decision (`decision`)** when the step must judge the input — which case applies, whether a condition holds, how severe something is — and the answer space can be written down before seeing the input: yes/no, one of a fixed set, or a position on a described scale. The answer becomes a typed value in the state: a `router` can branch on it, a script can take it as input, or the procedure can end on it. Uncertain answers go to the client for review via `thresholds`, so a decision is never less safe than asking the client.
-3. **Client task (`client_task`)** only when the output must be generated: text, code, a plan, a synthesis. If a judgment seems to need information the state lacks, add an upstream script that puts it in the state instead of falling back to a client task.
+2. **Decision (`decision`)** when the step must judge the input — which case applies, whether a condition holds, how severe something is — and the answer space can be written down before seeing the input: yes/no, one of a fixed set, or a position on a described scale. The answer becomes a typed value in the state: a `router` can branch on it, a script can take it as input, or the procedure can end on it. `thresholds` mark the questions where an uncertain answer must be reconsidered, so a decision is never less safe than leaving the judgment to free-form reasoning.
+3. **Client task (`client_task`)** only when the output must be generated by the agent itself: text, code, a plan, a synthesis. If a judgment seems to need information the state lacks, add an upstream script that puts it in the state instead of falling back to a client task.
 
-While scripting is critical, scripting the wrong things results in brittle errors and over-restriction. Asking the client for what a script or decision can do also costs speed, consistency, and calibration.
+While scripting is critical, scripting the wrong things results in brittle errors and over-restriction. Leaving to free-form reasoning what a script or decision can do also costs speed, consistency, and calibration.
 
 #### When Writing Scripts
 **Be lean and fast — prefer a maintained library over re-implementing a heavy algorithm (e.g. an optimization solver). You don't know the consumer's runtime budget - default to efficient; slow scripts risk timing out.**
@@ -339,7 +334,7 @@ Further advice ([System One concepts](https://docs.typesafe.ai/concepts/system-o
 
 ### Use Simple Type Vocabulary
 
-Use a small, simple vocabulary for step input types.  Only expand where absolutely necessary. The server compiles each step's `inputs` to a JSON Schema and validates the client's input against it at runtime, so these are enforced, not advisory.
+Use a small, simple vocabulary for step input types.  Only expand where absolutely necessary. Each step's `inputs` compile to a JSON Schema that the state is checked against before the step runs, so these are enforced, not advisory.
 
 - `string`
 - `integer`
@@ -455,5 +450,5 @@ Checks: frontmatter — required fields (`name`, `description`, `metadata.aip-ve
 1. Dropping content from original SKILL.md to over compress a SKILL.md
 2. Dumping YAML bodies into chat without asking. Default to a natural-language summary; offer the raw artifact if the user wants it.
 3. Skipping the validator under user scope restrictions. `aip-spec validate` is part of this skill's contract, not a third-party resource — run it anyway and surface that you're doing so.
-4. Encoding rules, lookup tables, numeric calculations/thresholds, or other scriptable logic as prose instead of via scripts; or asking the client for a judgment a decision step can make.
+4. Encoding rules, lookup tables, numeric calculations/thresholds, or other scriptable logic as prose instead of via scripts; or leaving to free-form reasoning a judgment a decision step can make.
 5. Inventing AIP frontmatter keywords at the root. The only AIP-specific field is `metadata.aip-version`. No bare-root `aip_version:`, `aip:`, etc.
