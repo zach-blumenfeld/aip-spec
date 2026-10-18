@@ -3,7 +3,7 @@ name: aip
 description: Create skills as Agent Instruction Protocol (AIP) — schema-validated structure that gates quality at write time, catches silent drift, and makes a skill corpus queryable for governance and analytics. Use whenever authoring a skill an autonomous agent will consume, including net-new skills, and compiling existing material (runbooks, deliberations, specs, decision logs, post-mortems). Default to using this any time the consumer is an autonomous agent — the structural constraint is what makes a skill production-grade.
 compatibility: Requires uv (https://docs.astral.sh/uv/) for the aip-spec validator.
 metadata:
-  aip-version: "0.5a1"
+  aip-version: "0.6a0"
 ---
 
 # AIP — Agent Instruction Protocol
@@ -84,7 +84,7 @@ YAML metadata at the top of `SKILL.md`, delimited by `---` markers.
 |-------------------------|----------|----------------------------------------------------------------------------------------------------|
 | `name`                  | Yes      | 1–64 chars; lowercase `a–z`, `0–9`, hyphens; no leading, trailing, or consecutive hyphens. Must match the parent directory name. |
 | `description`           | Yes      | 1–1024 chars. Describes *what* the skill encodes and *when* to use it; include specific keywords that help agents identify relevant tasks. |
-| `metadata.aip-version`  | Yes      | AIP format version this skill is written in. Currently `"0.5a1"`. *AIP-specific.*                  |
+| `metadata.aip-version`  | Yes      | AIP format version this skill is written in. Currently `"0.6a0"`. *AIP-specific.*                  |
 | `license`               | No       | License name or reference to a bundled license file, e.g. `Apache-2.0`.                            |
 | `compatibility`         | No       | 1–500 chars. Only when the skill has specific environment requirements (intended product, system packages, network access, runtime versions); most skills don't need it. |
 | Other `metadata.*` keys | No       | Arbitrary string→string mapping for properties not defined by the Agent Skills spec, e.g. `author`, `version` (the skill's own version, distinct from `aip-version`). Use unique key names. |
@@ -100,7 +100,7 @@ YAML metadata at the top of `SKILL.md`, delimited by `---` markers.
 
 ```yaml
 metadata:
-  aip-version: "0.5a1"
+  aip-version: "0.6a0"
   author: example-org
   version: "1.0"
 ```
@@ -112,25 +112,25 @@ The body — everything after the closing `---` of the frontmatter — must be t
 Example (pared down for illustration — real skills typically carry more steps and richer detail), from the bundled `examples/billing-support` skill. The first step is the start; the router branches on the value the decision produced:
 
 ````markdown
-# AIP runtime — format 0.5a1
+# AIP runtime — format 0.6a0
 
 You are executing an Agent Instruction Protocol (AIP) procedure: the fenced YAML block in this skill's `SKILL.md`. AIP is a protocol for cheaply, quickly, and accurately executing multi-step tasks as a graph of typed steps. You drive the run and execute every step yourself, following the semantics below.
 
 Critical terminology:
 
 - **Client**: you, the agent running this procedure; the `client_task` step kind is named for it. You supply each step's input, run its script, answer its questions by your own judgment, perform its task, follow its router, and make the final call at every step.
-- **State**: the JSON object a step receives. Each step declares its required keys as `inputs`; extra keys pass through.
-- **Step kinds**: `execution` runs a script, `decision` asks typed questions about the state, `client_task` hands work to you, `router` branches on a value in the state, `end` declares the final state's shape.
+- **State**: the one JSON object a run carries. Each step declares the keys it reads as `inputs`; `execution` and `client_task` steps declare the keys they add as `outputs`, and a `decision` adds one key per question.
+- **Step kinds**: `execution` runs a script, `decision` asks typed questions about the state, `client_task` hands work to you, `router` branches on a value in the state, `end` declares the procedure's result.
 
 ## Execution
 
-The state is one JSON object. It starts as the start step's `inputs` and flows along `inputs_to`; each step's output is merged over it, so keys accumulate and extra keys pass through untouched. A step runs only if the state holds every key it declares in `inputs`, with the declared types; check that before each step. You may change the state before any step runs; you have the final say at every step.
+The state starts as the start step's `inputs` and flows along `inputs_to`; each step adds its outputs to it. Every key is produced by exactly one step, so keys accumulate and nothing is overwritten. A step runs only if the state holds every key it declares in `inputs`, with the declared types; check that before each step. You have the final say at every step.
 
-- **`execution`**: run `script` with one JSON object on stdin, `{"currentState": <state>, "assets": {<file stem>: <content>}, "expects": <the next step's inputs>}`. The script writes one JSON object to stdout; merge it over the state.
-- **`decision`**: answer each question against the state. Each answer collapses to one value under its question name and is merged over the state: a noul to `true`/`false`, a choice to its label, a score to its level number. `thresholds` name the questions where an uncertain answer matters most; when your answer to one is a close call, reconsider it before continuing.
-- **`client_task`**: render `template` with `{key}` from the state, `{assets[stem]}` for its assets, and `{meta.name}` for the skill name. Perform the task, loading `references` if their descriptions apply, and produce the next step's `inputs`; merge them over the state.
+- **`execution`**: run `script` with one JSON object on stdin, `{"currentState": <state>, "assets": {<file stem>: <content>}, "expects": <the next step's inputs>}`. The script writes one JSON object to stdout holding the step's `outputs`; add them to the state.
+- **`decision`**: answer each question against the state. Each answer collapses to one value under its question name and is added to the state: a noul to `true`/`false`, a choice to its label, a score to its level number. `thresholds` name the questions where an uncertain answer matters most; when your answer to one is a close call, reconsider it before continuing.
+- **`client_task`**: render `template` with `{key}` from the state, `{assets[stem]}` for its assets, and `{meta.name}` for the skill name. Perform the task, loading `references` if their descriptions apply, and produce the step's `outputs`; add them to the state.
 - **`router`**: read the state's `branch_on` key and continue at `branches[value]`. A value with no branch is an error.
-- **`end`**: the state must hold `end`'s `inputs`. That state is the procedure's result.
+- **`end`**: the state must hold `end`'s `inputs`. Those keys are the procedure's result.
 
 ```yaml
 purpose: >
@@ -187,6 +187,13 @@ steps:
     script: scripts/escalate.py
     assets:
       - assets/config.json
+    outputs:
+      - name: ticket_id
+        type: integer
+        description: The tier-2 ticket opened for the message.
+      - name: queue
+        type: string
+        description: The queue the ticket was routed to.
     inputs_to: end
 
   - name: reply
@@ -203,6 +210,10 @@ steps:
     references:
       - path: references/help.md
         description: Escalation contacts and plan matrix. Only for plan changes, currency issues, or charges older than 30 days.
+    outputs:
+      - name: reply
+        type: string
+        description: The drafted reply to send the customer.
     inputs_to: end
 
   - name: end
@@ -332,9 +343,19 @@ Further advice ([System One concepts](https://docs.typesafe.ai/concepts/system-o
 
 
 
+### Declare What Each Step Adds
+
+Every `execution` and `client_task` step lists the keys it adds to the state as `outputs` (same shape as `inputs`: name, type, description). A decision's outputs are its question names; routers and the end step add nothing. The end step's `inputs` are the procedure's result, and the start step's `inputs` are everything the caller must supply. The validator enforces three rules:
+
+1. Every key a step consumes (its `inputs`, or a router's `branch_on`) is produced by a step on every path to it, or declared on the start step. A key produced on only one branch cannot be read after the branches join.
+2. Each key is produced by exactly one step and is never a start input. No step overwrites another's key; if two steps would produce the same name, rename one.
+3. A `client_task` must declare `outputs`: they are exactly what the agent is asked to answer with.
+
+A script prints only its declared outputs, never an echo of its inputs.
+
 ### Use Simple Type Vocabulary
 
-Use a small, simple vocabulary for step input types.  Only expand where absolutely necessary. Each step's `inputs` compile to a JSON Schema that the state is checked against before the step runs, so these are enforced, not advisory.
+Use a small, simple vocabulary for step input and output types.  Only expand where absolutely necessary. Each step's `inputs` and `outputs` compile to JSON Schemas that the state and the step's result are checked against, so these are enforced, not advisory.
 
 - `string`
 - `integer`
@@ -432,7 +453,7 @@ Checklist. Follow sequentially.
 ```bash
 aip-spec validate <path/to/skill-folder>
 ```
-Checks: frontmatter — required fields (`name`, `description`, `metadata.aip-version`), Agent Skills format rules on `name` (length, charset, hyphen rules, folder-name match), length caps on `description` and `compatibility`, type rules on `license`/`allowed-tools`/`metadata` values, `metadata.aip-version` matches the validator's format version. Required folder structure (`source/` present). Body is the AIP runtime block, verbatim, then exactly one fenced YAML block. The YAML validates against the AIP procedure schema. Graph rules: unique step names, a runnable start, exactly one `end`, every `inputs_to` and router branch resolves, every step reachable from the start and able to reach the end, unique input names, thresholds name real questions, every referenced asset, reference, and script exists on disk.
+Checks: frontmatter — required fields (`name`, `description`, `metadata.aip-version`), Agent Skills format rules on `name` (length, charset, hyphen rules, folder-name match), length caps on `description` and `compatibility`, type rules on `license`/`allowed-tools`/`metadata` values, `metadata.aip-version` matches the validator's format version. Required folder structure (`source/` present). Body is the AIP runtime block, verbatim, then exactly one fenced YAML block. The YAML validates against the AIP procedure schema. Graph rules: unique step names, a runnable start, exactly one `end`, every `inputs_to` and router branch resolves, every step reachable from the start and able to reach the end, unique input and output names, thresholds name real questions, every consumed key produced on every path or declared on the start step, one producer per key, `outputs` on every `client_task`, every referenced asset, reference, and script exists on disk.
 
 **Output contract:**
 - Exit 0 on success, 1 on any error.
