@@ -323,6 +323,24 @@
           "title": "Outputs",
           "type": "array"
         },
+        "command": {
+          "anyOf": [
+            {
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How the script is launched, as an argument list run from the script's folder: `[\"bash\", \"run.sh\"]`. Omitted, it is `python` on the script. The first item must be the `requires` interpreter or one of its `tools`.",
+          "title": "Command"
+        },
         "assets": {
           "description": "Constant inputs the script always receives, such as a config file. Re-read from disk on every invoke.",
           "items": {
@@ -397,6 +415,36 @@
         "type"
       ],
       "title": "IOItem",
+      "type": "object"
+    },
+    "Interpreter": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "The program that runs the scripts, as found on PATH: `python`, `bash`, `node`. Execution steps without a `command` are launched with `python`.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]+(\\.[0-9]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Minimum version, dotted numbers (`3.10`). For `python` it is checked against the interpreter that runs the scripts; for anything else against the first version number `<name> --version` prints.",
+          "title": "Version"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Interpreter",
       "type": "object"
     },
     "NoulCriteria": {
@@ -486,6 +534,39 @@
         "description"
       ],
       "title": "Reference",
+      "type": "object"
+    },
+    "Requires": {
+      "additionalProperties": false,
+      "description": "What the machine that runs the scripts must have. The client checks it before the first\nexecution step and stops with one message naming every missing item.",
+      "properties": {
+        "interpreter": {
+          "$ref": "#/$defs/Interpreter",
+          "description": "The interpreter the scripts need, with its minimum version."
+        },
+        "packages": {
+          "description": "Python distributions the scripts import, as installed by pip (`numpy`, `scikit-learn>=1.3`), optionally with a minimum version. Checked in the interpreter that runs `python` scripts.",
+          "items": {
+            "pattern": "^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?(>=[0-9]+(\\.[0-9]+)*)?$",
+            "type": "string"
+          },
+          "title": "Packages",
+          "type": "array"
+        },
+        "tools": {
+          "description": "Other executables the scripts call or are launched with, each checked on PATH (`git`, `ffmpeg`, `bash`).",
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*$",
+            "type": "string"
+          },
+          "title": "Tools",
+          "type": "array"
+        }
+      },
+      "required": [
+        "interpreter"
+      ],
+      "title": "Requires",
       "type": "object"
     },
     "RouterStep": {
@@ -594,8 +675,20 @@
       "title": "Do Not Use When",
       "type": "array"
     },
+    "requires": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Requires"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The environment the scripts need: interpreter and minimum version, Python packages, other tools. Required when the procedure has execution steps."
+    },
     "steps": {
-      "description": "The nodes of the execution graph. The first step is the start and must be runnable (decision, execution, or client_task). Exactly one step has kind `end`. Every runnable step names the node that receives its output via `inputs_to`; routers name theirs via `branches`. The validator checks that names are unique, every reference resolves, every step is reachable from the start, every step can reach the end, every consumed key is produced on every path to its consumer or declared on the start step, every key has exactly one producer, and every referenced asset, reference, and script exists on disk.",
+      "description": "The nodes of the execution graph. The first step is the start and must be runnable (decision, execution, or client_task). Exactly one step has kind `end`. Every runnable step names the node that receives its output via `inputs_to`; routers name theirs via `branches`. The validator checks that names are unique, every reference resolves, every step is reachable from the start, every step can reach the end, every consumed key is produced on every path to its consumer or declared on the start step, every key has exactly one producer, a procedure with execution steps declares `requires` and launches each script with its interpreter or one of its tools, and every referenced asset, reference, and script exists on disk.",
       "items": {
         "discriminator": {
           "mapping": {

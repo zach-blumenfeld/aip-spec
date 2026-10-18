@@ -277,10 +277,47 @@ class GraphChecks(unittest.TestCase):
         steps["build"]["outputs"] = [*delivered, {"name": "errors", "type": "list[*]"}, {"name": "warnings", "type": "list[*]"}]
         steps["repair"]["outputs"] = [{"name": "repair_notes", "type": "string"}]
         steps["deliver"]["outputs"] = [{"name": "deliverables", "type": "list[*]"}, {"name": "summary", "type": "string"}]
+        body["requires"] = {"interpreter": {"name": "python", "version": "3.10"}}  # B2, not under test here
         issues = check_graph(ProcedureSpec.model_validate(body), "x")
         self.assertEqual(set(kinds(issues)), {"unproduced_input"})
         build = next(i for i in issues if "step `build`" in i.message)
         self.assertIn("consumes `script_path`, `output_json`, `dot_path`, `image_path`, which no step produces", build.message)
+
+    def test_scripts_need_requires(self):
+        del self.body["requires"]
+        issues = check_graph(self.spec(), "x")
+        self.assertEqual(kinds(issues), ["missing_requires"])
+        self.assertIn("runs scripts (`escalate`) but declares no `requires`", issues[0].message)
+        self.body["steps"] = [s for s in self.body["steps"] if s["kind"] != "execution"]
+        self.step("by-tone")["branches"]["angry"] = "reply"
+        self.assertEqual(check_graph(self.spec(), "x"), [])  # no scripts, nothing to require
+
+    def test_requires_shape(self):
+        self.assertEqual(self.spec().requires.interpreter.version, "3.10")
+        self.body["requires"] = {"interpreter": {"name": "python", "version": "3.10"},
+                                 "packages": ["numpy", "scikit-learn>=1.3"], "tools": ["git"]}
+        self.assertEqual(self.spec().requires.packages, ["numpy", "scikit-learn>=1.3"])
+        for bad in ({"packages": ["numpy"]},                                    # no interpreter
+                    {"interpreter": {"name": "python", "version": "3.x"}},
+                    {"interpreter": {"name": "python"}, "packages": ["numpy==1.0"]},
+                    {"interpreter": {"name": "python"}, "gpu": True}):
+            self.body["requires"] = bad
+            with self.assertRaises(ValidationError, msg=bad):
+                self.spec()
+
+    def test_command_launcher_must_be_declared(self):
+        self.step("escalate")["command"] = ["bash", "escalate.sh"]
+        issues = check_graph(self.spec(), "x")
+        self.assertEqual(kinds(issues), ["undeclared_launcher"])
+        self.assertIn("`escalate` is launched with `bash`", issues[0].message)
+        self.body["requires"]["tools"] = ["bash"]
+        self.assertEqual(check_graph(self.spec(), "x"), [])
+        del self.step("escalate")["command"]
+        self.body["requires"]["interpreter"] = {"name": "bash"}
+        self.assertIn("has no `command`, so it is launched with `python`", check_graph(self.spec(), "x")[0].message)
+        self.step("escalate")["command"] = []
+        with self.assertRaises(ValidationError):
+            self.spec()
 
     def test_missing_resource_only_with_skill_dir(self):
         self.step("escalate")["assets"] = ["assets/nope.json"]

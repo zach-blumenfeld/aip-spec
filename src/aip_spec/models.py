@@ -141,6 +141,36 @@ class DecisionStep(Strict):
     inputs_to: StepName = Field(description="The step that receives this step's output.")
 
 
+PACKAGE_PATTERN = r"^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?(>=[0-9]+(\.[0-9]+)*)?$"
+VERSION_PATTERN = r"^[0-9]+(\.[0-9]+)*$"
+DEFAULT_LAUNCHER = "python"
+
+
+class Interpreter(Strict):
+    name: str = Field(
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._+-]*$",
+        description="The program that runs the scripts, as found on PATH: `python`, `bash`, `node`. Execution steps without a `command` are launched with `python`.",
+    )
+    version: str | None = Field(
+        default=None, pattern=VERSION_PATTERN,
+        description="Minimum version, dotted numbers (`3.10`). For `python` it is checked against the interpreter that runs the scripts; for anything else against the first version number `<name> --version` prints.",
+    )
+
+
+class Requires(Strict):
+    """What the machine that runs the scripts must have. The client checks it before the first
+    execution step and stops with one message naming every missing item."""
+    interpreter: Interpreter = Field(description="The interpreter the scripts need, with its minimum version.")
+    packages: List[Annotated[str, Field(pattern=PACKAGE_PATTERN)]] = Field(
+        default_factory=list,
+        description="Python distributions the scripts import, as installed by pip (`numpy`, `scikit-learn>=1.3`), optionally with a minimum version. Checked in the interpreter that runs `python` scripts.",
+    )
+    tools: List[Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")]] = Field(
+        default_factory=list,
+        description="Other executables the scripts call or are launched with, each checked on PATH (`git`, `ffmpeg`, `bash`).",
+    )
+
+
 class ExecutionStep(Strict):
     name: StepName
     kind: Literal["execution"] = Field(description="A script runs. Analogous to a tool call.")
@@ -151,6 +181,10 @@ class ExecutionStep(Strict):
         description="Path under `scripts/`, relative to the skill folder. Receives one JSON object on stdin ({state, assets, expects}, where `state` holds only the step's declared `inputs`) and writes one JSON object to stdout holding exactly the step's `outputs`.",
     )
     outputs: Outputs = Field(default_factory=list)
+    command: List[Annotated[str, Field(min_length=1)]] | None = Field(
+        default=None, min_length=1,
+        description="How the script is launched, as an argument list run from the script's folder: `[\"bash\", \"run.sh\"]`. Omitted, it is `python` on the script. The first item must be the `requires` interpreter or one of its `tools`.",
+    )
     assets: List[AssetPath] = Field(
         default_factory=list,
         description="Constant inputs the script always receives, such as a config file. Re-read from disk on every invoke.",
@@ -236,9 +270,13 @@ class ProcedureSpec(Strict):
         default_factory=list,
         description="Conditions under which the agent should NOT use this skill: explicit non-purposes that pair with trigger_when to sharpen activation.",
     )
+    requires: Requires | None = Field(
+        default=None,
+        description="The environment the scripts need: interpreter and minimum version, Python packages, other tools. Required when the procedure has execution steps.",
+    )
     steps: List[Step] = Field(
         min_length=2,
-        description="The nodes of the execution graph. The first step is the start and must be runnable (decision, execution, or client_task). Exactly one step has kind `end`. Every runnable step names the node that receives its output via `inputs_to`; routers name theirs via `branches`. The validator checks that names are unique, every reference resolves, every step is reachable from the start, every step can reach the end, every consumed key is produced on every path to its consumer or declared on the start step, every key has exactly one producer, and every referenced asset, reference, and script exists on disk.",
+        description="The nodes of the execution graph. The first step is the start and must be runnable (decision, execution, or client_task). Exactly one step has kind `end`. Every runnable step names the node that receives its output via `inputs_to`; routers name theirs via `branches`. The validator checks that names are unique, every reference resolves, every step is reachable from the start, every step can reach the end, every consumed key is produced on every path to its consumer or declared on the start step, every key has exactly one producer, a procedure with execution steps declares `requires` and launches each script with its interpreter or one of its tools, and every referenced asset, reference, and script exists on disk.",
     )
     anti_patterns: List[str] = Field(
         default_factory=list,

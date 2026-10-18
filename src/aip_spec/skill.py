@@ -19,7 +19,9 @@ from typing import Any, Iterable
 import yaml
 from pydantic import ValidationError
 
-from aip_spec.models import FORMAT_VERSION, LEGACY_VERSIONS, RUNNABLE_KINDS, ProcedureSpec, runtime_text
+from aip_spec.models import (
+    DEFAULT_LAUNCHER, FORMAT_VERSION, LEGACY_VERSIONS, RUNNABLE_KINDS, ProcedureSpec, runtime_text,
+)
 
 FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
 FENCE_PATTERN = re.compile(r"^```(?:yaml|yml)[ \t]*\n(.*?)\n```\s*$", re.DOTALL)
@@ -284,6 +286,31 @@ def check_state(spec: ProcedureSpec, path: str, by_name: dict[str, Any]) -> list
     return issues
 
 
+def check_requires(spec: ProcedureSpec, path: str) -> list[Issue]:
+    """A procedure with execution steps declares the environment its scripts need, and each
+    script is launched with the declared interpreter or one of the declared tools."""
+    executions = [(i, s) for i, s in enumerate(spec.steps) if s.kind == "execution"]
+    if not executions:
+        return []
+    if spec.requires is None:
+        names = ", ".join(f"`{s.name}`" for _, s in executions)
+        return [Issue(path, "missing_requires",
+                      f"the procedure runs scripts ({names}) but declares no `requires`; add a `requires` block "
+                      f"naming the interpreter and its minimum version, the packages, and the tools the scripts need",
+                      "body:$.requires")]
+    declared = {spec.requires.interpreter.name, *spec.requires.tools}
+    issues = []
+    for i, step in executions:
+        launcher = step.command[0] if step.command else DEFAULT_LAUNCHER
+        if launcher not in declared:
+            how = "is launched with" if step.command else "has no `command`, so it is launched with"
+            issues.append(Issue(path, "undeclared_launcher",
+                                f"execution step `{step.name}` {how} `{launcher}`, which `requires` does not name; make it "
+                                f"the interpreter or add it to `tools`", f"body:$.steps[{i}]"
+                                + (".command[0]" if step.command else "")))
+    return issues
+
+
 def check_graph(spec: ProcedureSpec, path: str, skill_dir: Path | None = None) -> list[Issue]:
     """Graph checks the models cannot express. `skill_dir` enables resource existence checks."""
     issues: list[Issue] = []
@@ -358,6 +385,7 @@ def check_graph(spec: ProcedureSpec, path: str, skill_dir: Path | None = None) -
                                         f"body:$.steps[{i}].branches.{key}"))
 
     issues.extend(check_state(spec, path, by_name))
+    issues.extend(check_requires(spec, path))
 
     for i, step in enumerate(steps):
         seen_inputs: set[str] = set()
