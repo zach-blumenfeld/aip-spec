@@ -9,6 +9,7 @@ import copy
 import io
 import json
 import os
+import re
 import shutil
 import tempfile
 import unittest
@@ -19,8 +20,8 @@ import yaml
 from pydantic import ValidationError
 from aip_spec import FORMAT_VERSION, ProcedureSpec, check_graph, example_dir, json_schema, parse_skill_md, runtime_text, skill_dir, validate_skill
 from aip_spec.cli import main, validate_command
-from aip_spec.models import SCHEMA_ID, SPEC_URL, DecisionStep, ProcedureSpec as Spec, Strict
-from aip_spec.skill import check_frontmatter
+from aip_spec.models import LEGACY_VERSIONS, SCHEMA_ID, SPEC_URL, DecisionStep, ProcedureSpec as Spec, Strict
+from aip_spec.skill import UPGRADES, check_frontmatter
 
 REPO = Path(__file__).parent.parent
 EXAMPLE = example_dir("billing-support")
@@ -377,7 +378,9 @@ class SkillFolder(unittest.TestCase):
             loaded, issues = validate_skill(skill)
             self.assertIsNone(loaded)
             self.assertEqual([(i.kind, i.severity) for i in issues], [("runtime_block_outdated", "error")])
-            self.assertIn("0.5a1", issues[0].message)
+            self.assertTrue(issues[0].message.startswith(
+                "0.5a1 skill: add outputs to each execution and client_task step, a requires block, and "
+                "regenerate the runtime block"), issues[0].message)
             with mock.patch("sys.stdout", new=io.StringIO()), mock.patch("sys.stderr", new=io.StringIO()):
                 self.assertEqual(main(["validate", str(skill)]), 1)
             # the block alone, or the version alone, is the same issue
@@ -387,6 +390,22 @@ class SkillFolder(unittest.TestCase):
             skill = copy_example(tmp)
             rewrite(skill, f'aip-version: "{FORMAT_VERSION}"', 'aip-version: "0.5a1"')
             self.assertEqual(kinds(validate_skill(skill)[1]), ["runtime_block_outdated"])
+
+    def test_previous_format_reads_as_an_upgrade(self):
+        """The 0.5a1 billing-support (no outputs, no requires, the old block) leads with the upgrade
+        note, then the steps it names; every recognised earlier format has an upgrade note."""
+        self.assertEqual(set(UPGRADES), set(LEGACY_VERSIONS))
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = copy_example(tmp)
+            rewrite(skill, runtime_text().strip(), runtime_text("0.5a1").strip())
+            rewrite(skill, f'aip-version: "{FORMAT_VERSION}"', 'aip-version: "0.5a1"')
+            text = (skill / "SKILL.md").read_text()
+            text = re.sub(r"requires:\n(  .*\n)+\n", "", text)
+            text = re.sub(r"    outputs:\n(      .*\n)+", "", text)
+            (skill / "SKILL.md").write_text(text)
+            issues = validate_skill(skill)[1]
+            self.assertEqual(kinds(issues), ["runtime_block_outdated", "missing_outputs", "missing_requires"])
+            self.assertIn("0.5a1 skill: add outputs", issues[0].message)
 
     def test_source_dir_required(self):
         with tempfile.TemporaryDirectory() as tmp:

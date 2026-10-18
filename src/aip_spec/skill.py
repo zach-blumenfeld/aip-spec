@@ -92,12 +92,18 @@ def parse_skill_md(skill_md: Path) -> tuple[SkillDoc | None, list[Issue]]:
     return SkillDoc(frontmatter=frontmatter, yaml_text=fence.group(1)), issues
 
 
+# What a skill in each recognised earlier format must change, said as an upgrade, not a fault.
+UPGRADES = {
+    "0.5a1": "add outputs to each execution and client_task step, a requires block, and regenerate the runtime block",
+}
+
+
 def _outdated(path: str, version: str) -> Issue:
     """The one issue a recognised earlier format gets; see `LEGACY_VERSIONS`."""
     return Issue(path, "runtime_block_outdated",
-                 f"this skill carries the {version} AIP runtime block; the current format is {FORMAT_VERSION}, which "
-                 f"does not accept it (replace the block with `aip-spec runtime` and set `metadata.{VERSION_KEY}` "
-                 f"to \"{FORMAT_VERSION}\")")
+                 f"{version} skill: {UPGRADES[version]} (`aip-spec runtime` prints the {FORMAT_VERSION} block; set "
+                 f"`metadata.{VERSION_KEY}` to \"{FORMAT_VERSION}\"). Format {FORMAT_VERSION} does not accept "
+                 f"{version} skills; any `missing_outputs` and `missing_requires` errors below name the steps to edit")
 
 
 # ---------------------------------------------------------------- frontmatter rules
