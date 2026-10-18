@@ -126,7 +126,7 @@ Critical terminology:
 
 The state starts as the start step's `inputs` and flows along `inputs_to`; each step adds its outputs to it. Every key is produced by exactly one step, so keys accumulate and nothing is overwritten. A step runs only if the state holds every key it declares in `inputs`, with the declared types; check that before each step. A step sees only those keys: give it its declared `inputs` and nothing else from the state. You have the final say at every step.
 
-- **`execution`**: run `script` with one JSON object on stdin, `{"state": <the step's inputs>, "assets": {<file stem>: <content>}, "expects": <the next step's inputs>}`. The script writes one JSON object to stdout holding exactly the step's `outputs`; add them to the state. A non-zero exit, or output missing a declared key, fails the step: stop there and report it rather than doing the step by hand.
+- **`execution`**: before the first one, check that this machine has everything `requires` names (the interpreter at its minimum version, the packages, the tools); if anything is missing, stop and name all of it. Run `script` from its folder, launched with the step's `command` when it has one and `python <script>` otherwise, with one JSON object on stdin, `{"state": <the step's inputs>, "assets": {<file stem>: <content>}, "expects": <the next step's inputs>}`. The script writes one JSON object to stdout holding exactly the step's `outputs`; add them to the state. A non-zero exit, or output missing a declared key, fails the step: stop there and report it rather than doing the step by hand.
 - **`decision`**: answer each question from the step's inputs, and from the run so far only when the step sets `history: true`. Each answer collapses to one value under its question name and is added to the state: a noul to `true`/`false`, a choice to its label, a score to its level number. `thresholds` name the questions where an uncertain answer matters most; when your answer to one is a close call, reconsider it before continuing.
 - **`client_task`**: render `template` with `{key}` from the step's inputs, `{assets[stem]}` for its assets, and `{meta.name}` for the skill name. Perform the task, loading `references` if their descriptions apply, and produce the step's `outputs`; add them to the state.
 - **`router`**: read the state's `branch_on` key and continue at `branches[value]`. A value with no branch is an error.
@@ -144,6 +144,11 @@ trigger_when:
 
 do_not_use_when:
   - The message is about product bugs or feature requests rather than billing.
+
+requires:
+  interpreter:
+    name: python
+    version: "3.10"
 
 steps:
   - name: triage
@@ -301,6 +306,8 @@ While scripting is critical, scripting the wrong things results in brittle error
 
 Favor fewer script files for simplicity.  Only create separate scripts files for truly independent self-contained logic.
 
+A procedure with `execution` steps declares a `requires` block: the `interpreter` with its minimum `version`, the Python `packages` the scripts import (pip names, optionally `name>=version`), and any other `tools` they call. The client checks it before the first script and names everything missing. Scripts launch with `python <script>`; a non-Python script sets `command` (`["bash", "run.sh"]`, run from the script's folder), whose first item must be the interpreter or one of the `tools`.
+
 #### When Writing Decisions
 
 There are three types:
@@ -453,7 +460,7 @@ Checklist. Follow sequentially.
 ```bash
 aip-spec validate <path/to/skill-folder>
 ```
-Checks: frontmatter — required fields (`name`, `description`, `metadata.aip-version`), Agent Skills format rules on `name` (length, charset, hyphen rules, folder-name match), length caps on `description` and `compatibility`, type rules on `license`/`allowed-tools`/`metadata` values, `metadata.aip-version` matches the validator's format version. Required folder structure (`source/` present). Body is the AIP runtime block, verbatim, then exactly one fenced YAML block. The YAML validates against the AIP procedure schema. Graph rules: unique step names, a runnable start, exactly one `end`, every `inputs_to` and router branch resolves, every step reachable from the start and able to reach the end, unique input and output names, thresholds name real questions, every consumed key produced on every path or declared on the start step, one producer per key, `outputs` on every `client_task`, every referenced asset, reference, and script exists on disk.
+Checks: frontmatter — required fields (`name`, `description`, `metadata.aip-version`), Agent Skills format rules on `name` (length, charset, hyphen rules, folder-name match), length caps on `description` and `compatibility`, type rules on `license`/`allowed-tools`/`metadata` values, `metadata.aip-version` matches the validator's format version. Required folder structure (`source/` present). Body is the AIP runtime block, verbatim, then exactly one fenced YAML block. The YAML validates against the AIP procedure schema. Graph rules: unique step names, a runnable start, exactly one `end`, every `inputs_to` and router branch resolves, every step reachable from the start and able to reach the end, unique input and output names, thresholds name real questions, every consumed key produced on every path or declared on the start step, one producer per key, `outputs` on every `client_task`, `requires` present when there are `execution` steps and each script's launcher declared in it, every referenced asset, reference, and script exists on disk.
 
 **Output contract:**
 - Exit 0 on success, 1 on any error.
