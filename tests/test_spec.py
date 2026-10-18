@@ -119,6 +119,12 @@ class SpecModels(unittest.TestCase):
         with self.assertRaises(ValidationError):
             ProcedureSpec.model_validate(body)
 
+    def test_decision_history_is_opt_in(self):
+        body = example_yaml()
+        self.assertFalse(ProcedureSpec.model_validate(body).start.history)
+        body["steps"][0]["history"] = True
+        self.assertTrue(ProcedureSpec.model_validate(body).start.history)
+
     def test_resource_prefix_enforced(self):
         body = example_yaml()
         body["steps"][2]["script"] = "escalate.py"

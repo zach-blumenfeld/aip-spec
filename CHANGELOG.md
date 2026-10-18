@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 Track changes here as you make them. On release, rename this section to the new version (e.g., `[0.5a2] — YYYY-MM-DD`) and start a new `[Unreleased]` at the top.
 
 - **Format `0.6a0` (breaking): declared outputs and the one-producer rule.** `execution` and `client_task` steps declare `outputs` (name, type, description, like `inputs`); a decision's outputs are its question names; routers and the end step add nothing, and the end step's `inputs` are the procedure's result. The validator adds three rules: every consumed key is produced on every path to its consumer or declared on the start step (`unproduced_input`); each key has exactly one producer and is never a start input (`duplicate_producer`); every `client_task` declares `outputs` (`missing_outputs`). The runtime block says the state only grows. `0.5a1` skills are recognised and rejected with `runtime_block_outdated` (now an error); `0.4a0` is no longer recognised. The `billing-support` example declares `escalate -> ticket_id, queue` and `reply -> reply`, and its script no longer echoes `message`.
+- Decision steps take `history` (default `false`): when set, the run's history goes to the decision model alongside the declared inputs. An execution script's stdin is described as `{state, assets, expects}` with `state` holding only the declared inputs; `billing-support`'s script reads `state`.
 
 ## [0.5a1] — 2026-10-06
 

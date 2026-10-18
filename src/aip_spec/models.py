@@ -134,6 +134,10 @@ class DecisionStep(Strict):
         default_factory=dict,
         description="Per-question review thresholds, keyed by question name. For `noul`: flag when the probability is within this margin of 0.5. For `choice` and `score`: flag when the model's confidence is below this value. The client may override per call; it makes the final call on flagged answers.",
     )
+    history: bool = Field(
+        default=False,
+        description="Send the run's history (every earlier step's input and result) to the decision model alongside the declared inputs. Off by default: history grows with the run and is billed on every decision.",
+    )
     inputs_to: StepName = Field(description="The step that receives this step's output.")
 
 
@@ -144,7 +148,7 @@ class ExecutionStep(Strict):
     inputs: Inputs
     script: str = Field(
         pattern=r"^scripts/.+",
-        description="Path under `scripts/`, relative to the skill folder. Receives one JSON object on stdin ({currentState, assets, expects}) and writes one JSON object to stdout holding the step's `outputs`.",
+        description="Path under `scripts/`, relative to the skill folder. Receives one JSON object on stdin ({state, assets, expects}, where `state` holds only the step's declared `inputs`) and writes one JSON object to stdout holding exactly the step's `outputs`.",
     )
     outputs: Outputs = Field(default_factory=list)
     assets: List[AssetPath] = Field(

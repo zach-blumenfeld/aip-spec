@@ -4,7 +4,7 @@ requires-python = ">=3.11"
 
 [[package]]
 name = "aip-spec"
-version = "0.6a0.dev1"
+version = "0.6a0.dev2"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },

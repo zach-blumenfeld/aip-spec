@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Open a tier-2 ticket for an angry billing customer.
 
-stdin:  {"currentState": {"message": str, "tone": str, ...}, "assets": {"config": str}, "expects": {...}}
+stdin:  {"state": {"message": str, "tone": str}, "assets": {"config": str}, "expects": {...}}
 stdout: {"ticket_id": int, "queue": str}
 """
 import json
 import sys
 
 payload = json.load(sys.stdin)
-state = payload["currentState"]
+state = payload["state"]
 config = json.loads(payload["assets"]["config"])
 
 ticket_id = abs(hash(state["message"])) % 100_000
