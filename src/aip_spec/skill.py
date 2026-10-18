@@ -91,11 +91,11 @@ def parse_skill_md(skill_md: Path) -> tuple[SkillDoc | None, list[Issue]]:
 
 
 def _outdated(path: str, version: str) -> Issue:
-    """The one warning a still-accepted earlier format gets; see `LEGACY_VERSIONS`."""
+    """The one issue a recognised earlier format gets; see `LEGACY_VERSIONS`."""
     return Issue(path, "runtime_block_outdated",
-                 f"this skill carries the {version} AIP runtime block; the current format is {FORMAT_VERSION} "
-                 f"(replace the block with `aip-spec runtime` and set `metadata.{VERSION_KEY}` to \"{FORMAT_VERSION}\")",
-                 severity="warning")
+                 f"this skill carries the {version} AIP runtime block; the current format is {FORMAT_VERSION}, which "
+                 f"does not accept it (replace the block with `aip-spec runtime` and set `metadata.{VERSION_KEY}` "
+                 f"to \"{FORMAT_VERSION}\")")
 
 
 # ---------------------------------------------------------------- frontmatter rules
@@ -199,6 +199,91 @@ def _resource_paths(step: Any) -> list[str]:
     return paths
 
 
+def _consumed(step: Any) -> list[str]:
+    """Keys a step reads from the state, in declaration order."""
+    if step.kind == "router":
+        return [step.branch_on]
+    return [item.name for item in step.inputs]
+
+
+def _produced(step: Any) -> list[str]:
+    """Keys a step adds to the state. Routers and the end step add none."""
+    if step.kind == "decision":
+        return list(step.questions)
+    return [item.name for item in getattr(step, "outputs", []) or []]
+
+
+def check_state(spec: ProcedureSpec, path: str, by_name: dict[str, Any]) -> list[Issue]:
+    """The state contract: every consumed key has a producer on every path to its consumer
+    (or is a start input), every key has exactly one producer, client tasks declare outputs."""
+    issues: list[Issue] = []
+    steps, start = spec.steps, spec.steps[0]
+    index = {id(step): i for i, step in enumerate(steps)}
+    start_inputs = set(_consumed(start)) if start.kind != "router" else set()
+
+    # Rule 3: a client task's outputs are what the client is asked to answer with.
+    for i, step in enumerate(steps):
+        if step.kind == "client_task" and not step.outputs:
+            issues.append(Issue(path, "missing_outputs",
+                                f"client_task `{step.name}` declares no `outputs`; they are what the client is asked to "
+                                f"answer with, so declare each key the answer adds to the state", f"body:$.steps[{i}]"))
+        seen: set[str] = set()
+        for j, item in enumerate(getattr(step, "outputs", []) or []):
+            if item.name in seen:
+                issues.append(Issue(path, "duplicate_output_name", f"step `{step.name}` declares output `{item.name}` more than once",
+                                    f"body:$.steps[{i}].outputs[{j}].name"))
+            seen.add(item.name)
+
+    # Rule 2: one producer per key, never a start input.
+    producers: dict[str, list[Any]] = {}
+    for step in steps:
+        for key in dict.fromkeys(_produced(step)):
+            producers.setdefault(key, []).append(step)
+    for key, makers in producers.items():
+        names = ", ".join(f"`{s.name}`" for s in makers)
+        if len(makers) > 1:
+            issues.append(Issue(path, "duplicate_producer",
+                                f"key `{key}` is produced by {names}; each key must have exactly one producer, so rename "
+                                f"one of them", f"body:$.steps[{index[id(makers[1])]}]"))
+        if key in start_inputs:
+            issues.append(Issue(path, "duplicate_producer",
+                                f"key `{key}` is a start input (declared on `{start.name}`) and is also produced by {names}; "
+                                f"a step must not overwrite what the client supplied, so rename the output",
+                                f"body:$.steps[{index[id(makers[0])]}]"))
+
+    # Rule 1: keys available on every path (must-availability over the graph, cycles included).
+    available: dict[str, set[str] | None] = {s.name: None for s in steps}
+    available[start.name] = set(start_inputs)
+    preds: dict[str, list[Any]] = {}
+    for step in steps:
+        for target in _targets(step):
+            preds.setdefault(target, []).append(step)
+    changed = True
+    while changed:
+        changed = False
+        for step in steps:
+            if step is start or by_name.get(step.name) is not step:
+                continue
+            known = [available[p.name] | set(_produced(p)) for p in preds.get(step.name, []) if available[p.name] is not None]
+            if not known:
+                continue
+            new = set.intersection(*known)
+            if new != available[step.name]:
+                available[step.name], changed = new, True
+    for i, step in enumerate(steps):
+        have = available[step.name]
+        if have is None:
+            continue  # unreachable; reported elsewhere
+        missing = [key for key in dict.fromkeys(_consumed(step)) if key not in have]
+        if missing:
+            keys = ", ".join(f"`{k}`" for k in missing)
+            issues.append(Issue(path, "unproduced_input",
+                                f"step `{step.name}` consumes {keys}, which no step produces on every path to it; declare "
+                                f"them on the start step `{start.name}` if the client supplies them, or as `outputs` of an "
+                                f"upstream step", f"body:$.steps[{i}]"))
+    return issues
+
+
 def check_graph(spec: ProcedureSpec, path: str, skill_dir: Path | None = None) -> list[Issue]:
     """Graph checks the models cannot express. `skill_dir` enables resource existence checks."""
     issues: list[Issue] = []
@@ -271,6 +356,8 @@ def check_graph(spec: ProcedureSpec, path: str, skill_dir: Path | None = None) -
                                         f"router `{step.name}` branches on `{step.branch_on}`, a {question.type} question in "
                                         f"`{feeder.name}`, but `{key}` is not one of its possible answers {sorted(allowed)}",
                                         f"body:$.steps[{i}].branches.{key}"))
+
+    issues.extend(check_state(spec, path, by_name))
 
     for i, step in enumerate(steps):
         seen_inputs: set[str] = set()

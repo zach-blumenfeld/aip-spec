@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/zach-blumenfeld/aip-spec/v0.5a1/assets/procedure.schema.json",
+  "$id": "https://raw.githubusercontent.com/zach-blumenfeld/aip-spec/v0.6a0/assets/procedure.schema.json",
   "title": "Procedure",
-  "description": "An execution graph of typed steps run by an AIP server with the client in the loop. Step kinds are `decision` (SystemOne questions answered by a structured decision model), `execution` (a script under scripts/), `client_task` (templated work the client performs itself), `router` (server-side branching on a value the client chose), and `end` (the shape of the final state). The first step in `steps` is the start. Edges are `inputs_to` by step name. Every runnable step declares the input shape it accepts; the server validates the client's input against it before running the step.",
+  "description": "An execution graph of typed steps run by an AIP server with the client in the loop. Step kinds are `decision` (SystemOne questions answered by a structured decision model), `execution` (a script under scripts/), `client_task` (templated work the client performs itself), `router` (server-side branching on a value the client chose), and `end` (the procedure's result). The first step in `steps` is the start; its `inputs` are what the client supplies. Edges are `inputs_to` by step name. Every runnable step declares the keys it reads as `inputs`; execution and client_task steps declare the keys they add as `outputs`, and a decision's outputs are its question names. Every key is produced by exactly one step, so the state only grows.",
   "aip": {
-    "spec": "https://github.com/zach-blumenfeld/aip-spec/tree/v0.5a1",
-    "version": "0.5a1"
+    "spec": "https://github.com/zach-blumenfeld/aip-spec/tree/v0.6a0",
+    "version": "0.6a0"
   },
   "$defs": {
     "ChoiceQuestion": {
@@ -68,7 +68,7 @@
           "type": "string"
         },
         "inputs": {
-          "description": "The input shape this step accepts from the client. Every listed name is required in the posted input; extra keys pass through untouched so upstream state can travel down the graph.",
+          "description": "The keys this step reads from the state; every listed name is required. Each must be produced by a step on every path to this one, or declared on the start step, whose inputs are what the client supplies.",
           "items": {
             "$ref": "#/$defs/IOItem"
           },
@@ -76,10 +76,18 @@
           "type": "array"
         },
         "template": {
-          "description": "The task template, rendered with `{key}` placeholders from the input, `{assets[name]}` for injected assets, and `{meta.name}` for the skill name. The client performs the task and posts structured JSON matching the next step's inputs.",
+          "description": "The task template, rendered with `{key}` placeholders from the input, `{assets[name]}` for injected assets, and `{meta.name}` for the skill name. The client performs the task and answers with structured JSON matching the step's `outputs`.",
           "pattern": "^assets/.+",
           "title": "Template",
           "type": "string"
+        },
+        "outputs": {
+          "description": "The keys the client's answer adds to the state. Required: they are what the client is asked to answer with.",
+          "items": {
+            "$ref": "#/$defs/IOItem"
+          },
+          "title": "Outputs",
+          "type": "array"
         },
         "assets": {
           "description": "Extra assets available to the template as `{assets[name]}`, where name is the file stem.",
@@ -124,7 +132,7 @@
       "type": "object"
     },
     "DataType": {
-      "description": "AIP type vocabulary. Machine-enforced at runtime: the server compiles each step's\n`inputs` to a JSON Schema and validates the client's input against it.",
+      "description": "AIP type vocabulary. Machine-enforced at runtime: the server compiles each step's\n`inputs` and `outputs` to JSON Schemas and validates the state and the step's result against them.",
       "enum": [
         "string",
         "integer",
@@ -157,7 +165,7 @@
           "type": "string"
         },
         "inputs": {
-          "description": "The input shape this step accepts from the client. Every listed name is required in the posted input; extra keys pass through untouched so upstream state can travel down the graph.",
+          "description": "The keys this step reads from the state; every listed name is required. Each must be produced by a step on every path to this one, or declared on the start step, whose inputs are what the client supplies.",
           "items": {
             "$ref": "#/$defs/IOItem"
           },
@@ -165,7 +173,7 @@
           "type": "array"
         },
         "questions": {
-          "description": "Questions keyed by name. Answers come back under the same names and, once collapsed, become keys in the suggested input for the next step.",
+          "description": "Questions keyed by name. Answers come back under the same names and, once collapsed, become keys in the state: a decision's outputs are its question names.",
           "minProperties": 1,
           "patternProperties": {
             "^[A-Za-z_][A-Za-z0-9_]*$": {
@@ -251,7 +259,7 @@
           "title": "Description"
         },
         "inputs": {
-          "description": "The shape of the final state the client receives when the procedure completes.",
+          "description": "The procedure's result: the keys handed back to the client when the run is done.",
           "items": {
             "$ref": "#/$defs/IOItem"
           },
@@ -288,7 +296,7 @@
           "type": "string"
         },
         "inputs": {
-          "description": "The input shape this step accepts from the client. Every listed name is required in the posted input; extra keys pass through untouched so upstream state can travel down the graph.",
+          "description": "The keys this step reads from the state; every listed name is required. Each must be produced by a step on every path to this one, or declared on the start step, whose inputs are what the client supplies.",
           "items": {
             "$ref": "#/$defs/IOItem"
           },
@@ -296,10 +304,18 @@
           "type": "array"
         },
         "script": {
-          "description": "Path under `scripts/`, relative to the skill folder. Receives one JSON object on stdin ({currentState, assets, expects}) and writes one JSON object to stdout, which becomes the result.",
+          "description": "Path under `scripts/`, relative to the skill folder. Receives one JSON object on stdin ({currentState, assets, expects}) and writes one JSON object to stdout holding the step's `outputs`.",
           "pattern": "^scripts/.+",
           "title": "Script",
           "type": "string"
+        },
+        "outputs": {
+          "description": "The keys this step adds to the state. Each key has exactly one producer in the procedure and is never a start input, so the state only grows and nothing is overwritten.",
+          "items": {
+            "$ref": "#/$defs/IOItem"
+          },
+          "title": "Outputs",
+          "type": "array"
         },
         "assets": {
           "description": "Constant inputs the script always receives, such as a config file. Re-read from disk on every invoke.",
@@ -347,14 +363,14 @@
       "additionalProperties": false,
       "properties": {
         "name": {
-          "description": "Key in the input object the client posts to this step. Decision answers land under their question name, so a downstream step that consumes an answer declares an input of the same name.",
+          "description": "Key in the state. In `inputs`, a key the step reads; in `outputs`, a key the step adds. Decision answers land under their question name, so a downstream step that consumes an answer declares an input of the same name.",
           "minLength": 1,
           "title": "Name",
           "type": "string"
         },
         "type": {
           "$ref": "#/$defs/DataType",
-          "description": "Type from the AIP vocabulary. Enforced when the client posts to this step."
+          "description": "Type from the AIP vocabulary. Enforced on the state before the step runs (inputs) and on the step's result (outputs)."
         },
         "description": {
           "anyOf": [
@@ -487,7 +503,7 @@
           "type": "string"
         },
         "branch_on": {
-          "description": "Key in the client's posted input whose value selects the branch. Typically a decision question name or an input produced by an execution or client task.",
+          "description": "Key in the state whose value selects the branch. Typically a decision question name or an output of an execution or client task. The router adds nothing to the state; its choice is recorded in the run history only.",
           "minLength": 1,
           "title": "Branch On",
           "type": "string"
@@ -573,7 +589,7 @@
       "type": "array"
     },
     "steps": {
-      "description": "The nodes of the execution graph. The first step is the start and must be runnable (decision, execution, or client_task). Exactly one step has kind `end`. Every runnable step names the node that receives its output via `inputs_to`; routers name theirs via `branches`. The validator checks that names are unique, every reference resolves, every step is reachable from the start, every step can reach the end, and every referenced asset, reference, and script exists on disk.",
+      "description": "The nodes of the execution graph. The first step is the start and must be runnable (decision, execution, or client_task). Exactly one step has kind `end`. Every runnable step names the node that receives its output via `inputs_to`; routers name theirs via `branches`. The validator checks that names are unique, every reference resolves, every step is reachable from the start, every step can reach the end, every consumed key is produced on every path to its consumer or declared on the start step, every key has exactly one producer, and every referenced asset, reference, and script exists on disk.",
       "items": {
         "discriminator": {
           "mapping": {
