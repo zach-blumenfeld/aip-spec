@@ -11,10 +11,10 @@ from typing import Annotated, Dict, List, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-FORMAT_VERSION = "0.6a0"
+FORMAT_VERSION = "0.6a1"
 # Earlier formats this validator recognises, so it can say `runtime_block_outdated` instead of
 # `missing_runtime_block`. 0.6a0 is breaking: skills in these formats are rejected, not accepted.
-LEGACY_VERSIONS = ("0.5a1",)
+LEGACY_VERSIONS = ("0.5a1", "0.6a0")
 SPEC_URL = f"https://github.com/zach-blumenfeld/aip-spec/tree/v{FORMAT_VERSION}"
 SCHEMA_ID = f"https://raw.githubusercontent.com/zach-blumenfeld/aip-spec/v{FORMAT_VERSION}/assets/procedure.schema.json"
 

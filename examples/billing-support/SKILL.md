@@ -2,10 +2,10 @@
 name: billing-support
 description: Triage an inbound billing message with a structured decision model, escalate angry customers to tier 2 by script, and draft a policy-grounded reply for everyone else. Use when handling customer billing messages, refund requests, or duplicate charge complaints.
 metadata:
-  aip-version: "0.6a0"
+  aip-version: "0.6a1"
 ---
 
-# AIP runtime — format 0.6a0
+# AIP runtime — format 0.6a1
 
 You are executing an Agent Instruction Protocol (AIP) procedure: the fenced YAML block in this skill's `SKILL.md`. AIP is a protocol for cheaply, quickly, and accurately executing multi-step tasks as a graph of typed steps. You drive the run and execute every step yourself, following the semantics below.
 

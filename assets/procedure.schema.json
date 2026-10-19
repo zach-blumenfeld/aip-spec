@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/zach-blumenfeld/aip-spec/v0.6a0/assets/procedure.schema.json",
+  "$id": "https://raw.githubusercontent.com/zach-blumenfeld/aip-spec/v0.6a1/assets/procedure.schema.json",
   "title": "Procedure",
   "description": "An execution graph of typed steps run by an AIP server with the client in the loop. Step kinds are `decision` (SystemOne questions answered by a structured decision model), `execution` (a script under scripts/), `client_task` (templated work the client performs itself), `router` (server-side branching on a value the client chose), and `end` (the procedure's result). The first step in `steps` is the start; its `inputs` are what the client supplies. Edges are `inputs_to` by step name. Every runnable step declares the keys it reads as `inputs`; execution and client_task steps declare the keys they add as `outputs`, and a decision's outputs are its question names. Every key is produced by exactly one step, so the state only grows.",
   "aip": {
-    "spec": "https://github.com/zach-blumenfeld/aip-spec/tree/v0.6a0",
-    "version": "0.6a0"
+    "spec": "https://github.com/zach-blumenfeld/aip-spec/tree/v0.6a1",
+    "version": "0.6a1"
   },
   "$defs": {
     "ChoiceQuestion": {

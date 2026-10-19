@@ -39,7 +39,7 @@ curl -sSfL https://raw.githubusercontent.com/zach-blumenfeld/aip-spec/main/insta
 Prefer Python tooling:
 
 ```bash
-uv tool install git+https://github.com/zach-blumenfeld/aip-spec.git@v0.6a0
+uv tool install git+https://github.com/zach-blumenfeld/aip-spec.git@v0.6a1
 aip-spec skill install                 # every detected agent
 aip-spec skill install claude-code     # one agent;  aip-spec skill list  shows them
 aip-spec skill install --path ./.claude/skills    # a project-local skills directory
@@ -100,7 +100,7 @@ uv sync --group dev && uv run pytest -q
 
 ### Bumping the AIP format version
 
-The format version (currently `0.6a0`) is referenced in several places that must stay in sync. In this repo, in order:
+The format version (currently `0.6a1`) is referenced in several places that must stay in sync. In this repo, in order:
 
 1. **`src/aip_spec/models.py`** — `FORMAT_VERSION`, and `pyproject.toml`'s `version`. The validator rejects skills whose `metadata.aip-version` differs from `FORMAT_VERSION`, and reports skills in a version listed in `LEGACY_VERSIONS` as `runtime_block_outdated` (a warning when the old format is still accepted, an error after a breaking change such as `0.6a0`).
 2. **`src/aip_spec/runtime.md`** — the block's heading carries the version; if the text changes, keep the previous text as `runtime-<old>.md`, add `<old>` to `LEGACY_VERSIONS`, and give it an entry in `UPGRADES` in `src/aip_spec/skill.py` (the edits an `<old>` skill needs, which the validator prints).

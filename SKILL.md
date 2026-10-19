@@ -3,7 +3,7 @@ name: aip
 description: Create skills as Agent Instruction Protocol (AIP) — schema-validated structure that gates quality at write time, catches silent drift, and makes a skill corpus queryable for governance and analytics. Use whenever authoring a skill an autonomous agent will consume, including net-new skills, and compiling existing material (runbooks, deliberations, specs, decision logs, post-mortems). Default to using this any time the consumer is an autonomous agent — the structural constraint is what makes a skill production-grade.
 compatibility: Requires uv (https://docs.astral.sh/uv/) for the aip-spec validator.
 metadata:
-  aip-version: "0.6a0"
+  aip-version: "0.6a1"
 ---
 
 # AIP — Agent Instruction Protocol
@@ -84,7 +84,7 @@ YAML metadata at the top of `SKILL.md`, delimited by `---` markers.
 |-------------------------|----------|----------------------------------------------------------------------------------------------------|
 | `name`                  | Yes      | 1–64 chars; lowercase `a–z`, `0–9`, hyphens; no leading, trailing, or consecutive hyphens. Must match the parent directory name. |
 | `description`           | Yes      | 1–1024 chars. Describes *what* the skill encodes and *when* to use it; include specific keywords that help agents identify relevant tasks. |
-| `metadata.aip-version`  | Yes      | AIP format version this skill is written in. Currently `"0.6a0"`. *AIP-specific.*                  |
+| `metadata.aip-version`  | Yes      | AIP format version this skill is written in. Currently `"0.6a1"`. *AIP-specific.*                  |
 | `license`               | No       | License name or reference to a bundled license file, e.g. `Apache-2.0`.                            |
 | `compatibility`         | No       | 1–500 chars. Only when the skill has specific environment requirements (intended product, system packages, network access, runtime versions); most skills don't need it. |
 | Other `metadata.*` keys | No       | Arbitrary string→string mapping for properties not defined by the Agent Skills spec, e.g. `author`, `version` (the skill's own version, distinct from `aip-version`). Use unique key names. |
@@ -100,7 +100,7 @@ YAML metadata at the top of `SKILL.md`, delimited by `---` markers.
 
 ```yaml
 metadata:
-  aip-version: "0.6a0"
+  aip-version: "0.6a1"
   author: example-org
   version: "1.0"
 ```
@@ -112,7 +112,7 @@ The body — everything after the closing `---` of the frontmatter — must be t
 Example (pared down for illustration — real skills typically carry more steps and richer detail), from the bundled `examples/billing-support` skill. The first step is the start; the router branches on the value the decision produced:
 
 ````markdown
-# AIP runtime — format 0.6a0
+# AIP runtime — format 0.6a1
 
 You are executing an Agent Instruction Protocol (AIP) procedure: the fenced YAML block in this skill's `SKILL.md`. AIP is a protocol for cheaply, quickly, and accurately executing multi-step tasks as a graph of typed steps. You drive the run and execute every step yourself, following the semantics below.
 

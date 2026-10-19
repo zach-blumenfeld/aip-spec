@@ -386,6 +386,20 @@ class SkillFolder(unittest.TestCase):
                 _, issues = validate_skill(skill)
                 self.assertIn(expected, kinds(issues))
 
+    def test_accepted_earlier_format_loads_with_a_warning(self):
+        """0.6a1 is not breaking: a skill still carrying the 0.6a0 block and version loads, with
+        `runtime_block_outdated` as one warning, and the CLI exits 0."""
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = copy_example(tmp)
+            rewrite(skill, runtime_text().strip(), runtime_text("0.6a0").strip())
+            rewrite(skill, f'aip-version: "{FORMAT_VERSION}"', 'aip-version: "0.6a0"')
+            loaded, issues = validate_skill(skill)
+            self.assertIsNotNone(loaded)
+            self.assertEqual([(i.kind, i.severity) for i in issues], [("runtime_block_outdated", "warning")])
+            self.assertTrue(issues[0].message.startswith("0.6a0 skill: regenerate the runtime block"), issues[0].message)
+            with mock.patch("sys.stdout", new=io.StringIO()), mock.patch("sys.stderr", new=io.StringIO()):
+                self.assertEqual(main(["validate", str(skill)]), 0)
+
     def test_previous_format_is_rejected_as_outdated(self):
         """0.6a0 is breaking: a skill still carrying the 0.5a1 block and version is recognised and
         rejected with `runtime_block_outdated`, said once; the CLI exits 1."""

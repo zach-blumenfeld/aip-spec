@@ -95,15 +95,23 @@ def parse_skill_md(skill_md: Path) -> tuple[SkillDoc | None, list[Issue]]:
 # What a skill in each recognised earlier format must change, said as an upgrade, not a fault.
 UPGRADES = {
     "0.5a1": "add outputs to each execution and client_task step, a requires block, and regenerate the runtime block",
+    "0.6a0": "regenerate the runtime block (only its heading changed) and bump the version; nothing else changes",
 }
+# Earlier formats the current one still accepts: their skills load, with the upgrade said as a warning.
+# A version in `LEGACY_VERSIONS` but not here is rejected (an error), as 0.5a1 is since the breaking 0.6a0.
+ACCEPTED_VERSIONS = ("0.6a0",)
 
 
 def _outdated(path: str, version: str) -> Issue:
     """The one issue a recognised earlier format gets; see `LEGACY_VERSIONS`."""
+    edits = (f"{version} skill: {UPGRADES[version]} (`aip-spec runtime` prints the {FORMAT_VERSION} block; set "
+             f"`metadata.{VERSION_KEY}` to \"{FORMAT_VERSION}\").")
+    if version in ACCEPTED_VERSIONS:
+        return Issue(path, "runtime_block_outdated",
+                     f"{edits} Format {FORMAT_VERSION} still accepts {version} skills", severity="warning")
     return Issue(path, "runtime_block_outdated",
-                 f"{version} skill: {UPGRADES[version]} (`aip-spec runtime` prints the {FORMAT_VERSION} block; set "
-                 f"`metadata.{VERSION_KEY}` to \"{FORMAT_VERSION}\"). Format {FORMAT_VERSION} does not accept "
-                 f"{version} skills; any `missing_outputs` and `missing_requires` errors below name the steps to edit")
+                 f"{edits} Format {FORMAT_VERSION} does not accept {version} skills; any `missing_outputs` and "
+                 f"`missing_requires` errors below name the steps to edit")
 
 
 # ---------------------------------------------------------------- frontmatter rules

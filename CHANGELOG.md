@@ -9,7 +9,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-Track changes here as you make them. On release, rename this section to the new version (e.g., `[0.6a1] — YYYY-MM-DD`) and start a new `[Unreleased]` at the top.
+Track changes here as you make them. On release, rename this section to the new version (e.g., `[0.6a2] — YYYY-MM-DD`) and start a new `[Unreleased]` at the top.
+
+## [0.6a1] — 2026-10-19
+
+A validator release: format `0.6a1` is `0.6a0` with one more rule and a new heading on the runtime block. A `0.6a0` skill still validates, with a `runtime_block_outdated` warning that says to regenerate the block and bump `metadata.aip-version`; nothing else in the skill changes.
 
 ### Added
 - **Type agreement (`type_mismatch`).** A key has one type everywhere it is declared: the validator now checks that every step's `inputs` entry carries the type its producer declares (a start input's declaration, a decision question's collapsed type: `noul` is `boolean`, `choice` is `string`, `score` is `integer`, or an execution/client_task step's `outputs` entry). Before, only the key's presence was checked, so a consumer could declare `ticket_id` as `string` while its script printed an integer and the mismatch surfaced only at run time.
