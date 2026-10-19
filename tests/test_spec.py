@@ -258,6 +258,24 @@ class GraphChecks(unittest.TestCase):
         self.assertEqual(kinds(issues), ["duplicate_producer"])
         self.assertIn("`message` is a start input", issues[0].message)
 
+    def test_rule_4_consumer_type_matches_producer_type(self):
+        self.step("end")["inputs"][0]["type"] = "object"           # `message` is a string start input
+        issues = check_graph(self.spec(), "x")
+        self.assertEqual(kinds(issues), ["type_mismatch"])
+        self.assertIn("declares input `message` as `object`, but it is `string` (start input on `triage`)", issues[0].message)
+        self.assertEqual(issues[0].location, "body:$.steps[4].inputs[0].type")
+        self.step("end")["inputs"][0]["type"] = "string"
+        self.step("reply")["inputs"][1]["type"] = "integer"        # `tone` is a choice question: a string
+        issues = check_graph(self.spec(), "x")
+        self.assertEqual(kinds(issues), ["type_mismatch"])
+        self.assertIn("a choice question in `triage`", issues[0].message)
+        self.step("reply")["inputs"][1]["type"] = "string"
+        self.step("end")["inputs"].append({"name": "ticket_id", "type": "string"})   # escalate outputs an integer
+        self.step("reply")["outputs"].append({"name": "ticket_id", "type": "integer"})   # so every path has it
+        issues = check_graph(self.spec(), "x")
+        self.assertEqual(sorted(kinds(issues)), ["duplicate_producer", "type_mismatch"])
+        self.assertIn("output of `escalate`", next(i for i in issues if i.kind == "type_mismatch").message)
+
     def test_rule_3_client_task_must_declare_outputs(self):
         del self.step("reply")["outputs"]
         issues = check_graph(self.spec(), "x")

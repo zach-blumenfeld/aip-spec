@@ -11,6 +11,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 Track changes here as you make them. On release, rename this section to the new version (e.g., `[0.6a1] — YYYY-MM-DD`) and start a new `[Unreleased]` at the top.
 
+### Added
+- **Type agreement (`type_mismatch`).** A key has one type everywhere it is declared: the validator now checks that every step's `inputs` entry carries the type its producer declares (a start input's declaration, a decision question's collapsed type: `noul` is `boolean`, `choice` is `string`, `score` is `integer`, or an execution/client_task step's `outputs` entry). Before, only the key's presence was checked, so a consumer could declare `ticket_id` as `string` while its script printed an integer and the mismatch surfaced only at run time.
+
 ## [0.6a0] — 2026-10-18
 
 Breaking: `0.5a1` skills do not validate. Upgrading one takes three edits: declare `outputs` on each `execution` and `client_task` step, add a `requires` block when the skill has scripts, and replace the runtime block with `aip-spec runtime` (setting `metadata.aip-version` to `"0.6a0"`). The validator's `runtime_block_outdated` message for a `0.5a1` skill says exactly that, ahead of the `missing_outputs` and `missing_requires` errors that name the steps; the `aip` repo's `docs/upgrading.md` walks through `billing-support` as the example.

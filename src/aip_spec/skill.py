@@ -221,9 +221,14 @@ def _produced(step: Any) -> list[str]:
     return [item.name for item in getattr(step, "outputs", []) or []]
 
 
+# The state type a collapsed answer lands as, per question type.
+QUESTION_TYPES = {"noul": "boolean", "choice": "string", "score": "integer"}
+
+
 def check_state(spec: ProcedureSpec, path: str, by_name: dict[str, Any]) -> list[Issue]:
     """The state contract: every consumed key has a producer on every path to its consumer
-    (or is a start input), every key has exactly one producer, client tasks declare outputs."""
+    (or is a start input), every key has exactly one producer, client tasks declare outputs,
+    and a consumer declares the same type as the producer."""
     issues: list[Issue] = []
     steps, start = spec.steps, spec.steps[0]
     index = {id(step): i for i, step in enumerate(steps)}
@@ -258,6 +263,30 @@ def check_state(spec: ProcedureSpec, path: str, by_name: dict[str, Any]) -> list
                                 f"key `{key}` is a start input (declared on `{start.name}`) and is also produced by {names}; "
                                 f"a step must not overwrite what the client supplied, so rename the output",
                                 f"body:$.steps[{index[id(makers[0])]}]"))
+
+    # Rule 4: a consumer declares the type its producer declares. One key, one type, end to end.
+    produced_type: dict[str, tuple[str, str]] = {}      # key -> (type, who declares it)
+    if start.kind != "router":
+        for item in start.inputs:
+            produced_type.setdefault(item.name, (item.type.value, f"start input on `{start.name}`"))
+    for step in steps:
+        if step.kind == "decision":
+            for qname, q in step.questions.items():
+                produced_type.setdefault(qname, (QUESTION_TYPES[q.type], f"a {q.type} question in `{step.name}`"))
+        for item in getattr(step, "outputs", []) or []:
+            produced_type.setdefault(item.name, (item.type.value, f"output of `{step.name}`"))
+    for i, step in enumerate(steps):
+        if step.kind == "router":
+            continue
+        for j, item in enumerate(step.inputs):
+            if step is start and item.name in start_inputs:
+                continue
+            expected = produced_type.get(item.name)
+            if expected is not None and expected[0] != item.type.value:
+                issues.append(Issue(path, "type_mismatch",
+                                    f"step `{step.name}` declares input `{item.name}` as `{item.type.value}`, but it is "
+                                    f"`{expected[0]}` ({expected[1]}); a key has one type everywhere it is declared",
+                                    f"body:$.steps[{i}].inputs[{j}].type"))
 
     # Rule 1: keys available on every path (must-availability over the graph, cycles included).
     available: dict[str, set[str] | None] = {s.name: None for s in steps}
