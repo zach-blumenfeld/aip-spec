@@ -19,7 +19,9 @@ from typing import Any, Iterable
 import yaml
 from pydantic import ValidationError
 
-from aip_spec.models import FORMAT_VERSION, LEGACY_VERSIONS, RUNNABLE_KINDS, ProcedureSpec, runtime_text
+from aip_spec.models import (
+    DEFAULT_LAUNCHER, FORMAT_VERSION, LEGACY_VERSIONS, RUNNABLE_KINDS, ProcedureSpec, runtime_text,
+)
 
 FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
 FENCE_PATTERN = re.compile(r"^```(?:yaml|yml)[ \t]*\n(.*?)\n```\s*$", re.DOTALL)
@@ -90,12 +92,26 @@ def parse_skill_md(skill_md: Path) -> tuple[SkillDoc | None, list[Issue]]:
     return SkillDoc(frontmatter=frontmatter, yaml_text=fence.group(1)), issues
 
 
+# What a skill in each recognised earlier format must change, said as an upgrade, not a fault.
+UPGRADES = {
+    "0.5a1": "add outputs to each execution and client_task step, a requires block, and regenerate the runtime block",
+    "0.6a0": "regenerate the runtime block (only its heading changed) and bump the version; nothing else changes",
+}
+# Earlier formats the current one still accepts: their skills load, with the upgrade said as a warning.
+# A version in `LEGACY_VERSIONS` but not here is rejected (an error), as 0.5a1 is since the breaking 0.6a0.
+ACCEPTED_VERSIONS = ("0.6a0",)
+
+
 def _outdated(path: str, version: str) -> Issue:
-    """The one warning a still-accepted earlier format gets; see `LEGACY_VERSIONS`."""
+    """The one issue a recognised earlier format gets; see `LEGACY_VERSIONS`."""
+    edits = (f"{version} skill: {UPGRADES[version]} (`aip-spec runtime` prints the {FORMAT_VERSION} block; set "
+             f"`metadata.{VERSION_KEY}` to \"{FORMAT_VERSION}\").")
+    if version in ACCEPTED_VERSIONS:
+        return Issue(path, "runtime_block_outdated",
+                     f"{edits} Format {FORMAT_VERSION} still accepts {version} skills", severity="warning")
     return Issue(path, "runtime_block_outdated",
-                 f"this skill carries the {version} AIP runtime block; the current format is {FORMAT_VERSION} "
-                 f"(replace the block with `aip-spec runtime` and set `metadata.{VERSION_KEY}` to \"{FORMAT_VERSION}\")",
-                 severity="warning")
+                 f"{edits} Format {FORMAT_VERSION} does not accept {version} skills; any `missing_outputs` and "
+                 f"`missing_requires` errors below name the steps to edit")
 
 
 # ---------------------------------------------------------------- frontmatter rules
@@ -199,6 +215,145 @@ def _resource_paths(step: Any) -> list[str]:
     return paths
 
 
+def _consumed(step: Any) -> list[str]:
+    """Keys a step reads from the state, in declaration order."""
+    if step.kind == "router":
+        return [step.branch_on]
+    return [item.name for item in step.inputs]
+
+
+def _produced(step: Any) -> list[str]:
+    """Keys a step adds to the state. Routers and the end step add none."""
+    if step.kind == "decision":
+        return list(step.questions)
+    return [item.name for item in getattr(step, "outputs", []) or []]
+
+
+# The state type a collapsed answer lands as, per question type.
+QUESTION_TYPES = {"noul": "boolean", "choice": "string", "score": "integer"}
+
+
+def check_state(spec: ProcedureSpec, path: str, by_name: dict[str, Any]) -> list[Issue]:
+    """The state contract: every consumed key has a producer on every path to its consumer
+    (or is a start input), every key has exactly one producer, client tasks declare outputs,
+    and a consumer declares the same type as the producer."""
+    issues: list[Issue] = []
+    steps, start = spec.steps, spec.steps[0]
+    index = {id(step): i for i, step in enumerate(steps)}
+    start_inputs = set(_consumed(start)) if start.kind != "router" else set()
+
+    # Rule 3: a client task's outputs are what the client is asked to answer with.
+    for i, step in enumerate(steps):
+        if step.kind == "client_task" and not step.outputs:
+            issues.append(Issue(path, "missing_outputs",
+                                f"client_task `{step.name}` declares no `outputs`; they are what the client is asked to "
+                                f"answer with, so declare each key the answer adds to the state", f"body:$.steps[{i}]"))
+        seen: set[str] = set()
+        for j, item in enumerate(getattr(step, "outputs", []) or []):
+            if item.name in seen:
+                issues.append(Issue(path, "duplicate_output_name", f"step `{step.name}` declares output `{item.name}` more than once",
+                                    f"body:$.steps[{i}].outputs[{j}].name"))
+            seen.add(item.name)
+
+    # Rule 2: one producer per key, never a start input.
+    producers: dict[str, list[Any]] = {}
+    for step in steps:
+        for key in dict.fromkeys(_produced(step)):
+            producers.setdefault(key, []).append(step)
+    for key, makers in producers.items():
+        names = ", ".join(f"`{s.name}`" for s in makers)
+        if len(makers) > 1:
+            issues.append(Issue(path, "duplicate_producer",
+                                f"key `{key}` is produced by {names}; each key must have exactly one producer, so rename "
+                                f"one of them", f"body:$.steps[{index[id(makers[1])]}]"))
+        if key in start_inputs:
+            issues.append(Issue(path, "duplicate_producer",
+                                f"key `{key}` is a start input (declared on `{start.name}`) and is also produced by {names}; "
+                                f"a step must not overwrite what the client supplied, so rename the output",
+                                f"body:$.steps[{index[id(makers[0])]}]"))
+
+    # Rule 4: a consumer declares the type its producer declares. One key, one type, end to end.
+    produced_type: dict[str, tuple[str, str]] = {}      # key -> (type, who declares it)
+    if start.kind != "router":
+        for item in start.inputs:
+            produced_type.setdefault(item.name, (item.type.value, f"start input on `{start.name}`"))
+    for step in steps:
+        if step.kind == "decision":
+            for qname, q in step.questions.items():
+                produced_type.setdefault(qname, (QUESTION_TYPES[q.type], f"a {q.type} question in `{step.name}`"))
+        for item in getattr(step, "outputs", []) or []:
+            produced_type.setdefault(item.name, (item.type.value, f"output of `{step.name}`"))
+    for i, step in enumerate(steps):
+        if step.kind == "router":
+            continue
+        for j, item in enumerate(step.inputs):
+            if step is start and item.name in start_inputs:
+                continue
+            expected = produced_type.get(item.name)
+            if expected is not None and expected[0] != item.type.value:
+                issues.append(Issue(path, "type_mismatch",
+                                    f"step `{step.name}` declares input `{item.name}` as `{item.type.value}`, but it is "
+                                    f"`{expected[0]}` ({expected[1]}); a key has one type everywhere it is declared",
+                                    f"body:$.steps[{i}].inputs[{j}].type"))
+
+    # Rule 1: keys available on every path (must-availability over the graph, cycles included).
+    available: dict[str, set[str] | None] = {s.name: None for s in steps}
+    available[start.name] = set(start_inputs)
+    preds: dict[str, list[Any]] = {}
+    for step in steps:
+        for target in _targets(step):
+            preds.setdefault(target, []).append(step)
+    changed = True
+    while changed:
+        changed = False
+        for step in steps:
+            if step is start or by_name.get(step.name) is not step:
+                continue
+            known = [available[p.name] | set(_produced(p)) for p in preds.get(step.name, []) if available[p.name] is not None]
+            if not known:
+                continue
+            new = set.intersection(*known)
+            if new != available[step.name]:
+                available[step.name], changed = new, True
+    for i, step in enumerate(steps):
+        have = available[step.name]
+        if have is None:
+            continue  # unreachable; reported elsewhere
+        missing = [key for key in dict.fromkeys(_consumed(step)) if key not in have]
+        if missing:
+            keys = ", ".join(f"`{k}`" for k in missing)
+            issues.append(Issue(path, "unproduced_input",
+                                f"step `{step.name}` consumes {keys}, which no step produces on every path to it; declare "
+                                f"them on the start step `{start.name}` if the client supplies them, or as `outputs` of an "
+                                f"upstream step", f"body:$.steps[{i}]"))
+    return issues
+
+
+def check_requires(spec: ProcedureSpec, path: str) -> list[Issue]:
+    """A procedure with execution steps declares the environment its scripts need, and each
+    script is launched with the declared interpreter or one of the declared tools."""
+    executions = [(i, s) for i, s in enumerate(spec.steps) if s.kind == "execution"]
+    if not executions:
+        return []
+    if spec.requires is None:
+        names = ", ".join(f"`{s.name}`" for _, s in executions)
+        return [Issue(path, "missing_requires",
+                      f"the procedure runs scripts ({names}) but declares no `requires`; add a `requires` block "
+                      f"naming the interpreter and its minimum version, the packages, and the tools the scripts need",
+                      "body:$.requires")]
+    declared = {spec.requires.interpreter.name, *spec.requires.tools}
+    issues = []
+    for i, step in executions:
+        launcher = step.command[0] if step.command else DEFAULT_LAUNCHER
+        if launcher not in declared:
+            how = "is launched with" if step.command else "has no `command`, so it is launched with"
+            issues.append(Issue(path, "undeclared_launcher",
+                                f"execution step `{step.name}` {how} `{launcher}`, which `requires` does not name; make it "
+                                f"the interpreter or add it to `tools`", f"body:$.steps[{i}]"
+                                + (".command[0]" if step.command else "")))
+    return issues
+
+
 def check_graph(spec: ProcedureSpec, path: str, skill_dir: Path | None = None) -> list[Issue]:
     """Graph checks the models cannot express. `skill_dir` enables resource existence checks."""
     issues: list[Issue] = []
@@ -271,6 +426,9 @@ def check_graph(spec: ProcedureSpec, path: str, skill_dir: Path | None = None) -
                                         f"router `{step.name}` branches on `{step.branch_on}`, a {question.type} question in "
                                         f"`{feeder.name}`, but `{key}` is not one of its possible answers {sorted(allowed)}",
                                         f"body:$.steps[{i}].branches.{key}"))
+
+    issues.extend(check_state(spec, path, by_name))
+    issues.extend(check_requires(spec, path))
 
     for i, step in enumerate(steps):
         seen_inputs: set[str] = set()

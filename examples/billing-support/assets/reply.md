@@ -9,4 +9,4 @@ Customer message:
 Policy:
 {assets[policy]}
 
-Return JSON with `message` (the original customer message) and `reply` (your reply text).
+Return JSON with `reply` (your reply text).

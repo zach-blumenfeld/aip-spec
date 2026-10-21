@@ -11,9 +11,10 @@ from typing import Annotated, Dict, List, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-FORMAT_VERSION = "0.5a1"
-# Earlier formats whose skills this validator still accepts, with a `runtime_block_outdated` warning.
-LEGACY_VERSIONS = ("0.4a0",)
+FORMAT_VERSION = "0.6a1"
+# Earlier formats this validator recognises, so it can say `runtime_block_outdated` instead of
+# `missing_runtime_block`. 0.6a0 is breaking: skills in these formats are rejected, not accepted.
+LEGACY_VERSIONS = ("0.5a1", "0.6a0")
 SPEC_URL = f"https://github.com/zach-blumenfeld/aip-spec/tree/v{FORMAT_VERSION}"
 SCHEMA_ID = f"https://raw.githubusercontent.com/zach-blumenfeld/aip-spec/v{FORMAT_VERSION}/assets/procedure.schema.json"
 
@@ -23,7 +24,7 @@ QUESTION_NAME_PATTERN = r"^[A-Za-z_][A-Za-z0-9_]*$"
 
 class DataType(str, Enum):
     """AIP type vocabulary. Machine-enforced at runtime: the server compiles each step's
-    `inputs` to a JSON Schema and validates the client's input against it."""
+    `inputs` and `outputs` to JSON Schemas and validates the state and the step's result against them."""
     STRING = "string"
     INTEGER = "integer"
     FLOAT = "float"
@@ -51,9 +52,9 @@ AssetPath = Annotated[str, Field(
 class IOItem(Strict):
     name: str = Field(
         min_length=1,
-        description="Key in the input object the client posts to this step. Decision answers land under their question name, so a downstream step that consumes an answer declares an input of the same name.",
+        description="Key in the state. In `inputs`, a key the step reads; in `outputs`, a key the step adds. Decision answers land under their question name, so a downstream step that consumes an answer declares an input of the same name.",
     )
-    type: DataType = Field(description="Type from the AIP vocabulary. Enforced when the client posts to this step.")
+    type: DataType = Field(description="Type from the AIP vocabulary. Enforced on the state before the step runs (inputs) and on the step's result (outputs).")
     description: str | None = Field(
         default=None,
         description="One-line summary of what this value is. Optional but recommended: it makes the graph readable without opening the backing script or template.",
@@ -61,7 +62,11 @@ class IOItem(Strict):
 
 
 Inputs = Annotated[List[IOItem], Field(
-    description="The input shape this step accepts from the client. Every listed name is required in the posted input; extra keys pass through untouched so upstream state can travel down the graph.",
+    description="The keys this step reads from the state; every listed name is required. Each must be produced by a step on every path to this one, or declared on the start step, whose inputs are what the client supplies.",
+)]
+
+Outputs = Annotated[List[IOItem], Field(
+    description="The keys this step adds to the state. Each key has exactly one producer in the procedure and is never a start input, so the state only grows and nothing is overwritten.",
 )]
 
 
@@ -123,13 +128,47 @@ class DecisionStep(Strict):
     inputs: Inputs
     questions: Dict[Annotated[str, Field(pattern=QUESTION_NAME_PATTERN)], Question] = Field(
         min_length=1,
-        description="Questions keyed by name. Answers come back under the same names and, once collapsed, become keys in the suggested input for the next step.",
+        description="Questions keyed by name. Answers come back under the same names and, once collapsed, become keys in the state: a decision's outputs are its question names.",
     )
     thresholds: Dict[str, Annotated[float, Field(ge=0, le=1)]] = Field(
         default_factory=dict,
         description="Per-question review thresholds, keyed by question name. For `noul`: flag when the probability is within this margin of 0.5. For `choice` and `score`: flag when the model's confidence is below this value. The client may override per call; it makes the final call on flagged answers.",
     )
+    history: bool = Field(
+        default=False,
+        description="Send the run's history (every earlier step's input and result) to the decision model alongside the declared inputs. Off by default: history grows with the run and is billed on every decision.",
+    )
     inputs_to: StepName = Field(description="The step that receives this step's output.")
+
+
+PACKAGE_PATTERN = r"^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?(>=[0-9]+(\.[0-9]+)*)?$"
+VERSION_PATTERN = r"^[0-9]+(\.[0-9]+)*$"
+DEFAULT_LAUNCHER = "python"
+
+
+class Interpreter(Strict):
+    name: str = Field(
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._+-]*$",
+        description="The program that runs the scripts, as found on PATH: `python`, `bash`, `node`. Execution steps without a `command` are launched with `python`.",
+    )
+    version: str | None = Field(
+        default=None, pattern=VERSION_PATTERN,
+        description="Minimum version, dotted numbers (`3.10`). For `python` it is checked against the interpreter that runs the scripts; for anything else against the first version number `<name> --version` prints.",
+    )
+
+
+class Requires(Strict):
+    """What the machine that runs the scripts must have. The client checks it before the first
+    execution step and stops with one message naming every missing item."""
+    interpreter: Interpreter = Field(description="The interpreter the scripts need, with its minimum version.")
+    packages: List[Annotated[str, Field(pattern=PACKAGE_PATTERN)]] = Field(
+        default_factory=list,
+        description="Python distributions the scripts import, as installed by pip (`numpy`, `scikit-learn>=1.3`), optionally with a minimum version. Checked in the interpreter that runs `python` scripts.",
+    )
+    tools: List[Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")]] = Field(
+        default_factory=list,
+        description="Other executables the scripts call or are launched with, each checked on PATH (`git`, `ffmpeg`, `bash`).",
+    )
 
 
 class ExecutionStep(Strict):
@@ -139,7 +178,12 @@ class ExecutionStep(Strict):
     inputs: Inputs
     script: str = Field(
         pattern=r"^scripts/.+",
-        description="Path under `scripts/`, relative to the skill folder. Receives one JSON object on stdin ({currentState, assets, expects}) and writes one JSON object to stdout, which becomes the result.",
+        description="Path under `scripts/`, relative to the skill folder. Receives one JSON object on stdin ({state, assets, expects}, where `state` holds only the step's declared `inputs`) and writes one JSON object to stdout holding exactly the step's `outputs`.",
+    )
+    outputs: Outputs = Field(default_factory=list)
+    command: List[Annotated[str, Field(min_length=1)]] | None = Field(
+        default=None, min_length=1,
+        description="How the script is launched, as an argument list run from the script's folder: `[\"bash\", \"run.sh\"]`. Omitted, it is `python` on the script. The first item must be the `requires` interpreter or one of its `tools`.",
     )
     assets: List[AssetPath] = Field(
         default_factory=list,
@@ -158,7 +202,11 @@ class ClientTaskStep(Strict):
     description: str = Field(description="What the client is asked to do. One line; the template carries the detail.")
     inputs: Inputs
     template: AssetPath = Field(
-        description="The task template, rendered with `{key}` placeholders from the input, `{assets[name]}` for injected assets, and `{meta.name}` for the skill name. The client performs the task and posts structured JSON matching the next step's inputs.",
+        description="The task template, rendered with `{key}` placeholders from the input, `{assets[name]}` for injected assets, and `{meta.name}` for the skill name. The client performs the task and answers with structured JSON matching the step's `outputs`.",
+    )
+    outputs: Outputs = Field(
+        default_factory=list,
+        description="The keys the client's answer adds to the state. Required: they are what the client is asked to answer with.",
     )
     assets: List[AssetPath] = Field(
         default_factory=list,
@@ -181,7 +229,7 @@ class RouterStep(Strict):
     description: str = Field(description="What the branch decides. One line.")
     branch_on: str = Field(
         min_length=1,
-        description="Key in the client's posted input whose value selects the branch. Typically a decision question name or an input produced by an execution or client task.",
+        description="Key in the state whose value selects the branch. Typically a decision question name or an output of an execution or client task. The router adds nothing to the state; its choice is recorded in the run history only.",
     )
     branches: Dict[str, StepName] = Field(
         min_length=2,
@@ -193,7 +241,7 @@ class EndStep(Strict):
     name: StepName
     kind: Literal["end"] = Field(description="Terminal node.")
     description: str | None = Field(default=None, description="What the final state represents. One line.")
-    inputs: Inputs = Field(description="The shape of the final state the client receives when the procedure completes.")
+    inputs: Inputs = Field(description="The procedure's result: the keys handed back to the client when the run is done.")
 
 
 Step = Annotated[Union[DecisionStep, ExecutionStep, ClientTaskStep, RouterStep, EndStep], Field(discriminator="kind")]
@@ -207,9 +255,11 @@ class ProcedureSpec(Strict):
     Step kinds are `decision` (SystemOne questions answered by a structured decision model),
     `execution` (a script under scripts/), `client_task` (templated work the client performs
     itself), `router` (server-side branching on a value the client chose), and `end` (the
-    shape of the final state). The first step in `steps` is the start. Edges are `inputs_to`
-    by step name. Every runnable step declares the input shape it accepts; the server
-    validates the client's input against it before running the step.
+    procedure's result). The first step in `steps` is the start; its `inputs` are what the
+    client supplies. Edges are `inputs_to` by step name. Every runnable step declares the keys
+    it reads as `inputs`; execution and client_task steps declare the keys they add as
+    `outputs`, and a decision's outputs are its question names. Every key is produced by
+    exactly one step, so the state only grows.
     """
     purpose: str = Field(description="What the procedure encapsulates as a coherent unit of work: the scope it covers and what it adds beyond general agent knowledge. One short paragraph.")
     trigger_when: List[str] = Field(
@@ -220,9 +270,13 @@ class ProcedureSpec(Strict):
         default_factory=list,
         description="Conditions under which the agent should NOT use this skill: explicit non-purposes that pair with trigger_when to sharpen activation.",
     )
+    requires: Requires | None = Field(
+        default=None,
+        description="The environment the scripts need: interpreter and minimum version, Python packages, other tools. Required when the procedure has execution steps.",
+    )
     steps: List[Step] = Field(
         min_length=2,
-        description="The nodes of the execution graph. The first step is the start and must be runnable (decision, execution, or client_task). Exactly one step has kind `end`. Every runnable step names the node that receives its output via `inputs_to`; routers name theirs via `branches`. The validator checks that names are unique, every reference resolves, every step is reachable from the start, every step can reach the end, and every referenced asset, reference, and script exists on disk.",
+        description="The nodes of the execution graph. The first step is the start and must be runnable (decision, execution, or client_task). Exactly one step has kind `end`. Every runnable step names the node that receives its output via `inputs_to`; routers name theirs via `branches`. The validator checks that names are unique, every reference resolves, every step is reachable from the start, every step can reach the end, every consumed key is produced on every path to its consumer or declared on the start step, every key has exactly one producer, a procedure with execution steps declares `requires` and launches each script with its interpreter or one of its tools, and every referenced asset, reference, and script exists on disk.",
     )
     anti_patterns: List[str] = Field(
         default_factory=list,

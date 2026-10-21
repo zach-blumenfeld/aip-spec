@@ -9,6 +9,7 @@ import copy
 import io
 import json
 import os
+import re
 import shutil
 import tempfile
 import unittest
@@ -19,12 +20,13 @@ import yaml
 from pydantic import ValidationError
 from aip_spec import FORMAT_VERSION, ProcedureSpec, check_graph, example_dir, json_schema, parse_skill_md, runtime_text, skill_dir, validate_skill
 from aip_spec.cli import main, validate_command
-from aip_spec.models import SCHEMA_ID, SPEC_URL, DecisionStep, ProcedureSpec as Spec, Strict
-from aip_spec.skill import check_frontmatter
+from aip_spec.models import LEGACY_VERSIONS, SCHEMA_ID, SPEC_URL, DecisionStep, ProcedureSpec as Spec, Strict
+from aip_spec.skill import UPGRADES, check_frontmatter
 
 REPO = Path(__file__).parent.parent
 EXAMPLE = example_dir("billing-support")
 SCHEMA_FILE = REPO / "assets" / "procedure.schema.json"
+DIALOGUE = Path(__file__).parent / "fixtures" / "dialogue-graph.yaml"
 
 
 def example_yaml() -> dict:
@@ -73,7 +75,7 @@ class GeneratedSchema(unittest.TestCase):
                 return
             seen.add(model)
             for name, field in model.model_fields.items():
-                if not field.description and name not in ("name", "inputs"):  # described on the shared alias
+                if not field.description and name not in ("name", "inputs", "outputs"):  # described on the shared alias
                     missing.append(f"{model.__name__}.{name}")
                 for sub in Strict.__subclasses__():
                     walk(sub)
@@ -117,6 +119,12 @@ class SpecModels(unittest.TestCase):
         body["steps"][0]["depends_on"] = ["x"]
         with self.assertRaises(ValidationError):
             ProcedureSpec.model_validate(body)
+
+    def test_decision_history_is_opt_in(self):
+        body = example_yaml()
+        self.assertFalse(ProcedureSpec.model_validate(body).start.history)
+        body["steps"][0]["history"] = True
+        self.assertTrue(ProcedureSpec.model_validate(body).start.history)
 
     def test_resource_prefix_enforced(self):
         body = example_yaml()
@@ -216,6 +224,120 @@ class GraphChecks(unittest.TestCase):
         self.step("by-tone")["branches"] = {"low": "reply", "high": "escalate"}
         self.assertEqual(kinds(check_graph(self.spec(), "x")), ["unknown_branch_value", "unknown_branch_value"])
 
+    def test_example_declares_outputs(self):
+        spec = self.spec()
+        self.assertEqual([o.name for o in spec.step("escalate").outputs], ["ticket_id", "queue"])
+        self.assertEqual([o.name for o in spec.step("reply").outputs], ["reply"])
+
+    def test_rule_1_consumed_key_needs_a_producer_on_every_path(self):
+        self.step("end")["inputs"].append({"name": "reply", "type": "string"})  # the angry path never drafts one
+        issues = check_graph(self.spec(), "x")
+        self.assertEqual(kinds(issues), ["unproduced_input"])
+        self.assertIn("step `end` consumes `reply`", issues[0].message)
+        self.assertIn("start step `triage`", issues[0].message)
+        self.step("end")["inputs"].pop()
+        self.step("escalate")["inputs"].append({"name": "account_id", "type": "string"})
+        self.assertEqual(kinds(check_graph(self.spec(), "x")), ["unproduced_input"])
+        self.step("triage")["inputs"].append({"name": "account_id", "type": "string"})  # the client supplies it
+        self.assertEqual(check_graph(self.spec(), "x"), [])
+
+    def test_rule_1_router_consumes_its_branch_key(self):
+        self.step("by-tone")["branch_on"] = "mood"
+        self.step("by-tone")["branches"] = {"angry": "escalate", "calm": "reply"}
+        self.assertIn("step `by-tone` consumes `mood`", check_graph(self.spec(), "x")[0].message)
+
+    def test_rule_2_two_steps_producing_tone(self):
+        self.step("reply")["outputs"].append({"name": "tone", "type": "string"})
+        issues = check_graph(self.spec(), "x")
+        self.assertEqual(kinds(issues), ["duplicate_producer"])
+        self.assertIn("key `tone` is produced by `triage`, `reply`", issues[0].message)
+
+    def test_rule_2_no_step_overwrites_a_start_input(self):
+        self.step("escalate")["outputs"].append({"name": "message", "type": "string"})
+        issues = check_graph(self.spec(), "x")
+        self.assertEqual(kinds(issues), ["duplicate_producer"])
+        self.assertIn("`message` is a start input", issues[0].message)
+
+    def test_rule_4_consumer_type_matches_producer_type(self):
+        self.step("end")["inputs"][0]["type"] = "object"           # `message` is a string start input
+        issues = check_graph(self.spec(), "x")
+        self.assertEqual(kinds(issues), ["type_mismatch"])
+        self.assertIn("declares input `message` as `object`, but it is `string` (start input on `triage`)", issues[0].message)
+        self.assertEqual(issues[0].location, "body:$.steps[4].inputs[0].type")
+        self.step("end")["inputs"][0]["type"] = "string"
+        self.step("reply")["inputs"][1]["type"] = "integer"        # `tone` is a choice question: a string
+        issues = check_graph(self.spec(), "x")
+        self.assertEqual(kinds(issues), ["type_mismatch"])
+        self.assertIn("a choice question in `triage`", issues[0].message)
+        self.step("reply")["inputs"][1]["type"] = "string"
+        self.step("end")["inputs"].append({"name": "ticket_id", "type": "string"})   # escalate outputs an integer
+        self.step("reply")["outputs"].append({"name": "ticket_id", "type": "integer"})   # so every path has it
+        issues = check_graph(self.spec(), "x")
+        self.assertEqual(sorted(kinds(issues)), ["duplicate_producer", "type_mismatch"])
+        self.assertIn("output of `escalate`", next(i for i in issues if i.kind == "type_mismatch").message)
+
+    def test_rule_3_client_task_must_declare_outputs(self):
+        del self.step("reply")["outputs"]
+        issues = check_graph(self.spec(), "x")
+        self.assertEqual(kinds(issues), ["missing_outputs"])
+        self.assertIn("client_task `reply`", issues[0].message)
+
+    def test_duplicate_output_name(self):
+        self.step("escalate")["outputs"].append({"name": "queue", "type": "string"})
+        self.assertIn("duplicate_output_name", kinds(check_graph(self.spec(), "x")))
+
+    def test_dialogue_parser_skill_fails_rule_1(self):
+        """aip-skillbench's dialogue-parser skill reads four paths no step supplies. With outputs
+        added where its scripts and tasks plainly produce them, rule 1 is all that remains."""
+        body = yaml.safe_load(DIALOGUE.read_text())
+        steps = {s["name"]: s for s in body["steps"]}
+        self.assertEqual(kinds(check_graph(ProcedureSpec.model_validate(body), "x")).count("missing_outputs"), 2)  # repair, deliver
+        delivered = [i for i in steps["deliver"]["inputs"] if i["name"] not in ("task_instructions", "script_path")]
+        steps["build"]["outputs"] = [*delivered, {"name": "errors", "type": "list[*]"}, {"name": "warnings", "type": "list[*]"}]
+        steps["repair"]["outputs"] = [{"name": "repair_notes", "type": "string"}]
+        steps["deliver"]["outputs"] = [{"name": "deliverables", "type": "list[*]"}, {"name": "summary", "type": "string"}]
+        body["requires"] = {"interpreter": {"name": "python", "version": "3.10"}}  # B2, not under test here
+        issues = check_graph(ProcedureSpec.model_validate(body), "x")
+        self.assertEqual(set(kinds(issues)), {"unproduced_input"})
+        build = next(i for i in issues if "step `build`" in i.message)
+        self.assertIn("consumes `script_path`, `output_json`, `dot_path`, `image_path`, which no step produces", build.message)
+
+    def test_scripts_need_requires(self):
+        del self.body["requires"]
+        issues = check_graph(self.spec(), "x")
+        self.assertEqual(kinds(issues), ["missing_requires"])
+        self.assertIn("runs scripts (`escalate`) but declares no `requires`", issues[0].message)
+        self.body["steps"] = [s for s in self.body["steps"] if s["kind"] != "execution"]
+        self.step("by-tone")["branches"]["angry"] = "reply"
+        self.assertEqual(check_graph(self.spec(), "x"), [])  # no scripts, nothing to require
+
+    def test_requires_shape(self):
+        self.assertEqual(self.spec().requires.interpreter.version, "3.10")
+        self.body["requires"] = {"interpreter": {"name": "python", "version": "3.10"},
+                                 "packages": ["numpy", "scikit-learn>=1.3"], "tools": ["git"]}
+        self.assertEqual(self.spec().requires.packages, ["numpy", "scikit-learn>=1.3"])
+        for bad in ({"packages": ["numpy"]},                                    # no interpreter
+                    {"interpreter": {"name": "python", "version": "3.x"}},
+                    {"interpreter": {"name": "python"}, "packages": ["numpy==1.0"]},
+                    {"interpreter": {"name": "python"}, "gpu": True}):
+            self.body["requires"] = bad
+            with self.assertRaises(ValidationError, msg=bad):
+                self.spec()
+
+    def test_command_launcher_must_be_declared(self):
+        self.step("escalate")["command"] = ["bash", "escalate.sh"]
+        issues = check_graph(self.spec(), "x")
+        self.assertEqual(kinds(issues), ["undeclared_launcher"])
+        self.assertIn("`escalate` is launched with `bash`", issues[0].message)
+        self.body["requires"]["tools"] = ["bash"]
+        self.assertEqual(check_graph(self.spec(), "x"), [])
+        del self.step("escalate")["command"]
+        self.body["requires"]["interpreter"] = {"name": "bash"}
+        self.assertIn("has no `command`, so it is launched with `python`", check_graph(self.spec(), "x")[0].message)
+        self.step("escalate")["command"] = []
+        with self.assertRaises(ValidationError):
+            self.spec()
+
     def test_missing_resource_only_with_skill_dir(self):
         self.step("escalate")["assets"] = ["assets/nope.json"]
         self.assertEqual(check_graph(self.spec(), "x"), [])
@@ -264,29 +386,58 @@ class SkillFolder(unittest.TestCase):
                 _, issues = validate_skill(skill)
                 self.assertIn(expected, kinds(issues))
 
-    def test_previous_format_is_accepted_with_one_warning(self):
-        """A skill still carrying the 0.4a0 block and version validates, with `runtime_block_outdated`
-        as its only issue, said once; the CLI exits 0."""
+    def test_accepted_earlier_format_loads_with_a_warning(self):
+        """0.6a1 is not breaking: a skill still carrying the 0.6a0 block and version loads, with
+        `runtime_block_outdated` as one warning, and the CLI exits 0."""
         with tempfile.TemporaryDirectory() as tmp:
             skill = copy_example(tmp)
-            rewrite(skill, runtime_text().strip(), runtime_text("0.4a0").strip())
-            rewrite(skill, f'aip-version: "{FORMAT_VERSION}"', 'aip-version: "0.4a0"')
+            rewrite(skill, runtime_text().strip(), runtime_text("0.6a0").strip())
+            rewrite(skill, f'aip-version: "{FORMAT_VERSION}"', 'aip-version: "0.6a0"')
             loaded, issues = validate_skill(skill)
             self.assertIsNotNone(loaded)
             self.assertEqual([(i.kind, i.severity) for i in issues], [("runtime_block_outdated", "warning")])
-            self.assertIn("0.4a0", issues[0].message)
-            with mock.patch("sys.stdout", new=io.StringIO()) as out, mock.patch("sys.stderr", new=io.StringIO()):
+            self.assertTrue(issues[0].message.startswith("0.6a0 skill: regenerate the runtime block"), issues[0].message)
+            with mock.patch("sys.stdout", new=io.StringIO()), mock.patch("sys.stderr", new=io.StringIO()):
                 self.assertEqual(main(["validate", str(skill)]), 0)
-            self.assertIn("1 warning(s)", out.getvalue())
-            # the block alone, or the version alone, is the same warning
-            rewrite(skill, 'aip-version: "0.4a0"', f'aip-version: "{FORMAT_VERSION}"')
+
+    def test_previous_format_is_rejected_as_outdated(self):
+        """0.6a0 is breaking: a skill still carrying the 0.5a1 block and version is recognised and
+        rejected with `runtime_block_outdated`, said once; the CLI exits 1."""
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = copy_example(tmp)
+            rewrite(skill, runtime_text().strip(), runtime_text("0.5a1").strip())
+            rewrite(skill, f'aip-version: "{FORMAT_VERSION}"', 'aip-version: "0.5a1"')
+            loaded, issues = validate_skill(skill)
+            self.assertIsNone(loaded)
+            self.assertEqual([(i.kind, i.severity) for i in issues], [("runtime_block_outdated", "error")])
+            self.assertTrue(issues[0].message.startswith(
+                "0.5a1 skill: add outputs to each execution and client_task step, a requires block, and "
+                "regenerate the runtime block"), issues[0].message)
+            with mock.patch("sys.stdout", new=io.StringIO()), mock.patch("sys.stderr", new=io.StringIO()):
+                self.assertEqual(main(["validate", str(skill)]), 1)
+            # the block alone, or the version alone, is the same issue
+            rewrite(skill, 'aip-version: "0.5a1"', f'aip-version: "{FORMAT_VERSION}"')
             self.assertEqual(kinds(validate_skill(skill)[1]), ["runtime_block_outdated"])
         with tempfile.TemporaryDirectory() as tmp:
             skill = copy_example(tmp)
-            rewrite(skill, f'aip-version: "{FORMAT_VERSION}"', 'aip-version: "0.4a0"')
-            loaded, issues = validate_skill(skill)
-            self.assertIsNotNone(loaded)
-            self.assertEqual(kinds(issues), ["runtime_block_outdated"])
+            rewrite(skill, f'aip-version: "{FORMAT_VERSION}"', 'aip-version: "0.5a1"')
+            self.assertEqual(kinds(validate_skill(skill)[1]), ["runtime_block_outdated"])
+
+    def test_previous_format_reads_as_an_upgrade(self):
+        """The 0.5a1 billing-support (no outputs, no requires, the old block) leads with the upgrade
+        note, then the steps it names; every recognised earlier format has an upgrade note."""
+        self.assertEqual(set(UPGRADES), set(LEGACY_VERSIONS))
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = copy_example(tmp)
+            rewrite(skill, runtime_text().strip(), runtime_text("0.5a1").strip())
+            rewrite(skill, f'aip-version: "{FORMAT_VERSION}"', 'aip-version: "0.5a1"')
+            text = (skill / "SKILL.md").read_text()
+            text = re.sub(r"requires:\n(  .*\n)+\n", "", text)
+            text = re.sub(r"    outputs:\n(      .*\n)+", "", text)
+            (skill / "SKILL.md").write_text(text)
+            issues = validate_skill(skill)[1]
+            self.assertEqual(kinds(issues), ["runtime_block_outdated", "missing_outputs", "missing_requires"])
+            self.assertIn("0.5a1 skill: add outputs", issues[0].message)
 
     def test_source_dir_required(self):
         with tempfile.TemporaryDirectory() as tmp:
